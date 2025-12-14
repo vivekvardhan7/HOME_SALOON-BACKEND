@@ -1,0 +1,47 @@
+# ===============================
+# Environment & Secrets
+# ===============================
+.env
+.env.*
+!.env.example
+
+# ===============================
+# Dependencies
+# ===============================
+node_modules/
+
+# ===============================
+# Prisma / Database (LOCAL ONLY)
+# ===============================
+prisma/prisma/dev.db
+prisma/prisma/dev.db-journal
+*.db
+
+# ===============================
+# Prisma Generated / Cache
+# ===============================
+prisma/migrations/
+prisma/.cache/
+
+# ===============================
+# Logs
+# ===============================
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# ===============================
+# Build Output
+# ===============================
+dist/
+build/
+
+# ===============================
+# OS & Editor
+# ===============================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

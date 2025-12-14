@@ -1,0 +1,671 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+<<<<<<< HEAD
+  provider = "sqlite"
+  url      = "file:./prisma/dev.db"
+=======
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+>>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
+}
+
+model User {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  phone     String?
+  password  String
+  firstName String
+  lastName  String
+  role      String   @default("CUSTOMER") // ADMIN, MANAGER, VENDOR, CUSTOMER
+  status    String   @default("ACTIVE") // ACTIVE, SUSPENDED, PENDING
+  avatar    String?
+  fcmToken  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  vendor             Vendor?
+  bookings           Booking[]   @relation("CustomerBookings")
+  managerAssignments Booking[]   @relation("ManagerAssignments")
+  reviews            Review[]
+  addresses          Address[]
+  payments           Payment[]
+  accessLogs         AccessLog[]
+  auditLogs          AuditLog[]
+
+  @@map("users")
+}
+
+model Vendor {
+  id                         String    @id @default(cuid())
+  userId                     String    @unique
+  shopName                   String
+  description                String?
+  status                     String    @default("PENDING") // PENDING, EMAIL_VERIFIED, PENDING_APPROVAL, APPROVED, REJECTED
+  emailVerified              Boolean   @default(false)
+  verificationToken          String?
+  verificationTokenExpiresAt DateTime?
+  rejectionReason            String?
+  businessLicense            String?
+  taxId                      String?
+
+  // Location
+  latitude  Float
+  longitude Float
+  address   String
+  city      String
+  state     String
+  zipCode   String
+
+  // Business Hours
+  mondayHours    String? // JSON: {"open": "09:00", "close": "18:00", "closed": false}
+  tuesdayHours   String?
+  wednesdayHours String?
+  thursdayHours  String?
+  fridayHours    String?
+  saturdayHours  String?
+  sundayHours    String?
+
+  // Settings
+  serviceRadius  Int @default(5) // km
+  advanceBooking Int @default(7) // days
+  cancellation   Int @default(24) // hours
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  services  Service[]
+  addons    Addon[]
+  slots     VendorSlot[]
+  bookings  Booking[]
+  reviews   Review[]
+  media     Media[]
+  employees Employee[]
+  products  Product[]
+<<<<<<< HEAD
+=======
+  assignments VendorAssignment[]
+
+>>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
+
+  @@map("vendors")
+}
+
+model ServiceCategoryModel {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  icon        String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  services ServiceCategoryMap[]
+
+  @@map("service_categories")
+}
+
+model Service {
+<<<<<<< HEAD
+  id          String   @id @default(cuid())
+  vendorId    String
+  name        String
+  description String?
+  duration    Int // minutes
+  price       Float
+  isActive    Boolean  @default(true)
+  image       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+=======
+  id               String   @id @default(cuid())
+  vendorId         String
+  name             String
+  description      String?
+  duration         Int // minutes
+  price            Float
+  isActive         Boolean  @default(true)
+  image            String?
+  tags             String[] @default([])
+  genderPreference String?  @default("UNISEX") // MEN, WOMEN, UNISEX
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+>>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
+
+  // Relations
+  vendor       Vendor               @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  categories   ServiceCategoryMap[]
+  addons       ServiceAddon[]
+  bookingItems BookingItem[]
+
+  @@index([vendorId])
+  @@map("services")
+}
+
+model ServiceCatalog {
+  id             String   @id @default(cuid())
+  slug           String   @unique
+  name           String
+  description    String?
+  duration       Int      @default(60)
+  customerPrice  Float
+  vendorPayout   Float
+  category       String?
+  icon           String?
+  allowsProducts Boolean  @default(false)
+  isActive       Boolean  @default(true)
+<<<<<<< HEAD
+=======
+  isAtHome       Boolean  @default(false)
+>>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  products     ServiceCatalogProduct[]
+  bookings     Booking[]
+  bookingItems BookingItem[]
+
+  @@map("service_catalog")
+}
+
+model ServiceCategoryMap {
+  id         String @id @default(cuid())
+  serviceId  String
+  categoryId String
+
+  // Relations
+  service  Service              @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  category ServiceCategoryModel @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceId, categoryId])
+  @@map("service_category_map")
+}
+
+model Addon {
+  id          String   @id @default(cuid())
+  vendorId    String
+  name        String
+  description String?
+  price       Float
+  duration    Int      @default(0) // additional minutes
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  vendor       Vendor             @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  services     ServiceAddon[]
+  bookingItems BookingItemAddon[]
+
+  @@index([vendorId])
+  @@map("addons")
+}
+
+model ServiceAddon {
+  id        String @id @default(cuid())
+  serviceId String
+  addonId   String
+
+  // Relations
+  service Service @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  addon   Addon   @relation(fields: [addonId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceId, addonId])
+  @@map("service_addons")
+}
+
+model VendorSlot {
+  id        String   @id @default(cuid())
+  vendorId  String
+  date      DateTime
+  startTime String // HH:MM format
+  endTime   String // HH:MM format
+  status    String   @default("AVAILABLE") // AVAILABLE, BOOKED, BLOCKED
+  bookingId String?  @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  vendor  Vendor   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  booking Booking? @relation(fields: [bookingId], references: [id])
+
+  @@unique([vendorId, date, startTime])
+  @@index([vendorId, date])
+  @@map("vendor_slots")
+}
+
+model Booking {
+  id               String  @id @default(cuid())
+  customerId       String
+  vendorId         String?
+  managerId        String?
+  catalogServiceId String?
+  employeeId       String? // Beautician assigned to this booking
+  bookingType      String  @default("AT_HOME") // AT_HOME, SALON_VISIT
+  status           String  @default("PENDING") // PENDING, AWAITING_MANAGER, AWAITING_VENDOR_RESPONSE, CONFIRMED, IN_PROGRESS, COMPLETED, CANCELLED, REFUNDED
+
+  // Scheduling
+  scheduledDate DateTime
+  scheduledTime String // HH:MM format
+  duration      Int // total minutes
+
+  // Pricing
+  subtotal        Float
+  discount        Float   @default(0)
+  tax             Float   @default(0)
+  total           Float
+  serviceSubtotal Float   @default(0)
+  productSubtotal Float   @default(0)
+  vendorPayout    Float?
+  platformRevenue Float?
+  includeProducts Boolean @default(false)
+<<<<<<< HEAD
+=======
+  serviceMode     String? // WITH_PRODUCTS, WITHOUT_PRODUCTS
+
+>>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
+
+  // Address
+  addressId String
+
+  // Metadata
+  notes                String?
+  cancellationReason   String?
+  managerAssignedAt    DateTime?
+  vendorRespondedAt    DateTime?
+  beauticianAssignedAt DateTime?
+  customerNotifiedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  customer       User             @relation("CustomerBookings", fields: [customerId], references: [id])
+  vendor         Vendor?          @relation(fields: [vendorId], references: [id])
+  manager        User?            @relation("ManagerAssignments", fields: [managerId], references: [id])
+  serviceCatalog ServiceCatalog?  @relation(fields: [catalogServiceId], references: [id])
+  employee       Employee?        @relation(fields: [employeeId], references: [id])
+  address        Address          @relation(fields: [addressId], references: [id])
+  items          BookingItem[]
+  products       BookingProduct[]
+  payments       Payment[]
+  reviews        Review[]
+  events         BookingEvent[]
+  slot           VendorSlot?
+<<<<<<< HEAD
+=======
+  assignments    VendorAssignment[]
+
+>>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
+
+  @@index([customerId])
+  @@index([vendorId])
+  @@index([managerId])
+  @@index([catalogServiceId])
+  @@index([employeeId])
+  @@index([bookingType])
+  @@index([scheduledDate])
+  @@map("bookings")
+}
+
+model BookingItem {
+  id               String   @id @default(cuid())
+  bookingId        String
+  serviceId        String?
+  catalogServiceId String?
+  quantity         Int      @default(1)
+  price            Float
+  basePrice        Float?
+  vendorPayout     Float?
+  duration         Int?
+  name             String?
+  description      String?
+  createdAt        DateTime @default(now())
+
+  // Relations
+  booking        Booking            @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  service        Service?           @relation(fields: [serviceId], references: [id])
+  catalogService ServiceCatalog?    @relation(fields: [catalogServiceId], references: [id])
+  addons         BookingItemAddon[]
+<<<<<<< HEAD
+=======
+  
+  vendorAssignmentId String?
+  vendorAssignment   VendorAssignment? @relation(fields: [vendorAssignmentId], references: [id])
+
+>>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
+
+  @@index([bookingId])
+  @@index([serviceId])
+  @@index([catalogServiceId])
+  @@map("booking_items")
+}
+
+model BookingProduct {
+  id               String   @id @default(cuid())
+  bookingId        String
+  productCatalogId String
+  quantity         Int      @default(1)
+  unitPrice        Float
+  vendorPayout     Float?
+  createdAt        DateTime @default(now())
+
+  booking        Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  productCatalog ProductCatalog @relation(fields: [productCatalogId], references: [id])
+<<<<<<< HEAD
+=======
+  
+  vendorAssignmentId String?
+  vendorAssignment   VendorAssignment? @relation(fields: [vendorAssignmentId], references: [id])
+
+>>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
+
+  @@index([bookingId])
+  @@index([productCatalogId])
+  @@map("booking_products")
+}
+
+model BookingItemAddon {
+  id            String   @id @default(cuid())
+  bookingItemId String
+  addonId       String
+  quantity      Int      @default(1)
+  price         Float
+  createdAt     DateTime @default(now())
+
+  // Relations
+  bookingItem BookingItem @relation(fields: [bookingItemId], references: [id], onDelete: Cascade)
+  addon       Addon       @relation(fields: [addonId], references: [id])
+
+  @@index([bookingItemId])
+  @@map("booking_item_addons")
+}
+
+model Payment {
+  id        String @id @default(cuid())
+  bookingId String
+  userId    String
+  amount    Float
+  method    String // CARD, UPI, WALLET
+  status    String @default("PENDING") // PENDING, PROCESSING, COMPLETED, FAILED, REFUNDED
+
+  // Payment Gateway
+  gatewayId       String? // Stripe/Razorpay payment ID
+  gatewayResponse String? // JSON string
+
+  // Refund
+  refundAmount Float?
+  refundReason String?
+  refundedAt   DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  booking Booking @relation(fields: [bookingId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
+
+  @@index([bookingId])
+  @@index([userId])
+  @@map("payments")
+}
+
+model Review {
+  id         String   @id @default(cuid())
+  bookingId  String   @unique
+  customerId String
+  vendorId   String
+  rating     Int // 1-5
+  comment    String?
+  response   String? // Vendor response
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // Relations
+  booking  Booking @relation(fields: [bookingId], references: [id])
+  customer User    @relation(fields: [customerId], references: [id])
+  vendor   Vendor  @relation(fields: [vendorId], references: [id])
+
+  @@index([vendorId])
+  @@map("reviews")
+}
+
+model Address {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String   @default("HOME") // HOME, WORK, OTHER
+  name      String?
+  street    String
+  city      String
+  state     String
+  zipCode   String
+  latitude  Float?
+  longitude Float?
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bookings Booking[]
+
+  @@index([userId])
+  @@map("addresses")
+}
+
+model Media {
+  id        String   @id @default(cuid())
+  vendorId  String?
+  type      String // IMAGE, VIDEO, DOCUMENT
+  url       String
+  filename  String
+  mimeType  String
+  size      Int
+  createdAt DateTime @default(now())
+
+  // Relations
+  vendor Vendor? @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@index([vendorId])
+  @@map("media")
+}
+
+model Coupon {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  description String?
+  type        String // PERCENTAGE, FIXED
+  value       Float
+  minAmount   Float?
+  maxDiscount Float?
+  usageLimit  Int?
+  usageCount  Int      @default(0)
+  isActive    Boolean  @default(true)
+  validFrom   DateTime
+  validUntil  DateTime
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("coupons")
+}
+
+model BookingEvent {
+  id        String   @id @default(cuid())
+  bookingId String
+  type      String // CREATED, CONFIRMED, CANCELLED, etc.
+  data      String? // JSON string
+  createdAt DateTime @default(now())
+
+  // Relations
+  booking Booking @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+
+  @@index([bookingId])
+  @@index([createdAt])
+  @@map("booking_events")
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  action     String
+  resource   String
+  resourceId String?
+  oldData    String? // JSON string
+  newData    String? // JSON string
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  // Relations
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+model Employee {
+  id             String   @id @default(cuid())
+  vendorId       String
+  name           String
+  role           String // stylist, colorist, technician, aesthetician, nail_specialist, manager
+  email          String
+  phone          String
+  experience     Int      @default(0) // years of experience
+  specialization String?
+  status         String   @default("ACTIVE") // ACTIVE, INACTIVE
+  rating         Float    @default(0)
+  totalBookings  Int      @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  // Relations
+  vendor   Vendor    @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  bookings Booking[]
+<<<<<<< HEAD
+=======
+  assignments VendorAssignment[]
+
+>>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
+
+  @@index([vendorId])
+  @@map("employees")
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  vendorId    String
+  name        String
+  category    String // hair_care, skincare, nail_care, makeup, tools, accessories
+  price       Float
+  stock       Int      @default(0)
+  sku         String?
+  description String?
+  isActive    Boolean  @default(true)
+  rating      Float    @default(0)
+  totalSales  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  vendor Vendor @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+
+  @@index([vendorId])
+  @@map("products")
+}
+
+model ProductCatalog {
+  id            String   @id @default(cuid())
+  slug          String   @unique
+  name          String
+  description   String?
+  category      String?
+  image         String?
+  customerPrice Float
+  vendorPayout  Float
+  sku           String?
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  services        ServiceCatalogProduct[]
+  bookingProducts BookingProduct[]
+
+  @@map("product_catalog")
+}
+
+model ServiceCatalogProduct {
+  id               String   @id @default(cuid())
+  serviceCatalogId String
+  productCatalogId String
+  quantity         Int      @default(1)
+  optional         Boolean  @default(true)
+  createdAt        DateTime @default(now())
+
+  serviceCatalog ServiceCatalog @relation(fields: [serviceCatalogId], references: [id], onDelete: Cascade)
+  productCatalog ProductCatalog @relation(fields: [productCatalogId], references: [id], onDelete: Cascade)
+
+  @@unique([serviceCatalogId, productCatalogId])
+  @@index([productCatalogId])
+  @@map("service_catalog_products")
+}
+
+model AccessLog {
+  id             String   @id @default(cuid())
+  userId         String?
+  emailAttempted String?
+  roleAttempted  String?
+  success        Boolean
+  method         String // email_password | google
+  ipAddress      String?
+  userAgent      String?
+  timestamp      DateTime @default(now())
+
+  // Relations
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([emailAttempted])
+  @@index([timestamp])
+  @@index([ipAddress])
+  @@map("access_logs")
+}
+<<<<<<< HEAD
+=======
+
+model VendorAssignment {
+  id          String   @id @default(cuid())
+  bookingId   String
+  vendorId    String
+  employeeId  String?
+  status      String   @default("PENDING") // PENDING, ASSIGNED, IN_PROGRESS, COMPLETED
+  vendorNotes String?
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  booking   Booking    @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  vendor    Vendor     @relation(fields: [vendorId], references: [id])
+  employee  Employee?  @relation(fields: [employeeId], references: [id])
+  items     BookingItem[]
+  products  BookingProduct[]
+
+  @@unique([bookingId, vendorId])
+  @@index([bookingId])
+  @@index([vendorId])
+  @@index([employeeId])
+  @@map("vendor_assignments")
+}
+
+>>>>>>> 42d761f (Initial backend commit with full vendor ecosystem (services, employees, products) + admin/manager features)
