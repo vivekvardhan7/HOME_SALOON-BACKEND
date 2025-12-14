@@ -111,23 +111,36 @@ app.get('/api/health', (req, res) => {
 });
 
 // Start server
-app.listen(PORT, async () => {
-  // Verify email transport (non-blocking)
-  /*
-  verifyEmailTransport().catch((err: any) => {
-    console.warn('⚠️  Email service not available (non-critical):', err.message);
-  });
-  */
+import { testSupabaseConnection } from './lib/supabase';
 
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`🌐 CORS enabled for: ${allowedOrigins.join(', ')}`);
-  console.log(`🌐 Also allowing all localhost origins in development`);
-  console.log(`📝 Login credentials:`);
-  console.log(`   Admin: admin@homebonzenga.com / admin123`);
-  console.log(`   Manager: manager@homebonzenga.com / manager123`);
-  console.log(`\n📍 Login endpoint: http://localhost:${PORT}/api/auth/login`);
-  console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
-  console.log(`\n💡 To test connection, visit: http://localhost:${PORT}/api/health`);
+const startServer = async () => {
+  // Test DB connection first
+  await testSupabaseConnection();
+
+  app.listen(PORT, async () => {
+
+    // Verify email transport (non-blocking)
+    /*
+    verifyEmailTransport().catch((err: any) => {
+      console.warn('⚠️  Email service not available (non-critical):', err.message);
+    });
+    */
+
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🌐 CORS enabled for: ${allowedOrigins.join(', ')}`);
+    console.log(`🌐 Also allowing all localhost origins in development`);
+    console.log(`📝 Login credentials:`);
+    console.log(`   Admin: admin@homebonzenga.com / admin123`);
+    console.log(`   Manager: manager@homebonzenga.com / manager123`);
+    console.log(`\n📍 Login endpoint: http://localhost:${PORT}/api/auth/login`);
+    console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
+    console.log(`\n💡 To test connection, visit: http://localhost:${PORT}/api/health`);
+  });
+};
+
+startServer().catch(err => {
+  console.error('❌ Failed to start server:', err);
+  process.exit(1);
 });
 
 export default app;

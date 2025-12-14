@@ -1,16 +1,19 @@
-import { Request, Response, NextFunction } from 'express';
+import { Response, NextFunction } from 'express';
 import { supabase } from '../lib/supabase';
+import { AuthenticatedRequest } from './auth';
 
 /**
  * Middleware to check if vendor is approved (blocks actions for pending vendors)
  * This should be used on routes that modify vendor data (services, products, employees)
  */
-export const checkVendorApproved = async (req: Request, res: Response, next: NextFunction) => {
+export const checkVendorApproved = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   try {
-    const { vendorId: userId } = req.params;
+    // SECURITY FIX: Do not rely on URL params. Use authenticated user ID.
+    const userId = req.user?.id;
 
     if (!userId) {
-      return res.status(400).json({ message: 'Vendor ID is required' });
+      // If used after authenticate middleware, this shouldn't happen, but good to be safe
+      return res.status(401).json({ message: 'Authentication required to check vendor status' });
     }
 
     // Find vendor by userId from Supabase
