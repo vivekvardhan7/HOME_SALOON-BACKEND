@@ -17,13 +17,13 @@ const verifySupabaseToken = async (token: string) => {
   try {
     // Decode without verification first to check if it's a Supabase token
     const decoded = jwt.decode(token, { complete: true }) as any;
-    
+
     // Check if it's a Supabase token (has 'sub' field and no 'userId' field)
     if (decoded?.payload?.sub && !decoded?.payload?.userId) {
       // For Supabase tokens, we trust them if they're valid JWT format
       // In production, you should verify with Supabase's public key
       const payload = decoded.payload;
-      
+
       // Get user from Supabase using Supabase user ID
       const userRes = await supabase
         .from('users')
@@ -43,7 +43,7 @@ const verifySupabaseToken = async (token: string) => {
         };
       }
     }
-    
+
     return null;
   } catch (error) {
     return null;
@@ -57,7 +57,7 @@ export const authenticate = async (
 ) => {
   try {
     const token = auth.extractTokenFromHeader(req.headers.authorization);
-    
+
     if (!token) {
       return res.status(401).json({ error: 'Access token required' });
     }
@@ -81,19 +81,19 @@ export const authenticate = async (
     }
 
     let payload: any;
-    
+
     // Try to verify as custom JWT first
     try {
       payload = auth.verifyToken(token);
     } catch (customError) {
       // If custom JWT verification fails, try Supabase token
       payload = await verifySupabaseToken(token);
-      
+
       if (!payload) {
         throw new Error('Invalid token');
       }
     }
-    
+
     // Check token type for custom JWT tokens
     if (payload.type && payload.type !== 'access') {
       return res.status(401).json({ error: 'Invalid token type' });
@@ -117,7 +117,7 @@ export const authenticate = async (
       };
       return next();
     }
-    
+
     if (userId === 'manager-static-id' && role === 'MANAGER') {
       req.user = {
         id: 'manager-static-id',
@@ -126,7 +126,7 @@ export const authenticate = async (
       };
       return next();
     }
-    
+
     // For all other users, verify they exist in Supabase
     // Verify user still exists and is active for database users
     const userRes = await supabase

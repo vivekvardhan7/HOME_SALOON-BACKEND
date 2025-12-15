@@ -88,6 +88,7 @@ import vendorServicesRoutes from './routes/vendor-services';
 import adminRoutes from './routes/admin';
 import customerRoutes from './routes/customer';
 import catalogRoutes from './routes/catalog';
+import vendorEmployeesRoutes from "./routes/vendor-employees";
 import { verifyEmailTransport } from './lib/emailService';
 
 // Use routes
@@ -97,6 +98,7 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/products', productsRoutes); // Legacy?
 app.use('/api/vendor', vendorProductsRoutes); // Mount products BEFORE vendor general routes to ensure priority
 app.use('/api/vendor', vendorServicesRoutes); // Mount services BEFORE vendor general routes to ensure priority
+app.use("/api/vendor", vendorEmployeesRoutes);
 app.use('/api/vendor', vendorApiRoutes);
 app.use('/api/vendor/bookings', vendorBookingsRoutes);
 app.use('/api/auth', authRoutes);
