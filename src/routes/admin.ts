@@ -616,11 +616,12 @@ router.get('/vendors/:vendorId', protect, async (req, res) => {
 
     // Fetch comprehensive data in parallel
     const [servicesRes, productsRes, employeesRes, bookingsRes, completedBookingsRes] = await Promise.all([
+      // Try 'services' table first (primary source)
       supabase
-        .from('vendor_services')
+        .from('services')
         .select('*')
         .eq('vendor_id', vendorId)
-        .order('updated_at', { ascending: false }),
+        .order('created_at', { ascending: false }),
 
       supabase
         .from('products')
@@ -650,7 +651,7 @@ router.get('/vendors/:vendorId', protect, async (req, res) => {
 
     // Debug: Log services query results
     if (servicesRes.error) {
-      console.error(`❌ Error fetching services for vendor ${vendorId}:`, servicesRes.error);
+      console.error(`❌ Error fetching services for vendor ${vendorId} from 'services' table:`, servicesRes.error);
     }
     console.log(`🔍 Services query for vendor ${vendorId}:`, {
       hasError: !!servicesRes.error,
@@ -659,37 +660,29 @@ router.get('/vendors/:vendorId', protect, async (req, res) => {
       vendorId: vendorId
     });
 
-    // If vendor_services table has column error or returns empty, try 'services' table as fallback
+    // Handle service data and fallback
     let servicesData = servicesRes.data || [];
-    if (servicesRes.error && servicesRes.error.code === '42703') {
-      // Column doesn't exist error (e.g., created_at) - try services table
-      console.log(`⚠️ Column error in vendor_services (${servicesRes.error.message}), trying 'services' table...`);
+
+    // Fallback: If 'services' table returned no data (or error), check 'vendor_services'
+    if (servicesData.length === 0) {
+      console.log(`⚠️ No services found in 'services' table, trying 'vendor_services' (legacy)...`);
       const { data: servicesFallback, error: servicesFallbackError } = await supabase
-        .from('services')
+        .from('vendor_services')
         .select('*')
         .eq('vendor_id', vendorId)
-        .order('created_at', { ascending: false });
-      
-      if (servicesFallbackError) {
-        console.error(`❌ Error fetching from 'services' table:`, servicesFallbackError);
-      } else {
-        console.log(`✅ Found ${servicesFallback?.length || 0} services in 'services' table`);
-        servicesData = servicesFallback || [];
-      }
-    } else if (servicesData.length === 0 && !servicesRes.error) {
-      // No error but empty result - try services table as fallback
-      console.log(`⚠️ No services found in vendor_services, trying 'services' table...`);
-      const { data: servicesFallback, error: servicesFallbackError } = await supabase
-        .from('services')
-        .select('*')
-        .eq('vendor_id', vendorId)
-        .order('created_at', { ascending: false });
-      
-      if (servicesFallbackError) {
-        console.error(`❌ Error fetching from 'services' table:`, servicesFallbackError);
-      } else {
-        console.log(`✅ Found ${servicesFallback?.length || 0} services in 'services' table`);
-        servicesData = servicesFallback || [];
+        .order('updated_at', { ascending: false });
+
+      if (!servicesFallbackError && servicesFallback && servicesFallback.length > 0) {
+        console.log(`✅ Found ${servicesFallback.length} services in 'vendor_services' table`);
+        servicesData = servicesFallback.map((s: any) => ({
+          ...s,
+          // Map legacy fields to match 'services' schema if needed
+          duration: s.duration_minutes || s.duration,
+          isActive: s.is_active,
+          category: s.category || 'General'
+        }));
+      } else if (servicesFallbackError) {
+        console.warn(`⚠️ Failed to fetch from 'vendor_services':`, servicesFallbackError.message);
       }
     }
 

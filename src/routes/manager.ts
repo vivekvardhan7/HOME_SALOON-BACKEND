@@ -697,6 +697,122 @@ router.get('/vendors/:id/details', protect, async (req: AuthenticatedRequest, re
       bookings: []
     };
 
+    // Fetch services, products, employees, and bookings in parallel
+    const [servicesRes, productsRes, employeesRes, bookingsRes] = await Promise.all([
+      // Try 'services' table first (primary source)
+      supabase
+        .from('services')
+        .select(`
+          *,
+          categories:service_category_map (
+            category:service_categories (*)
+          )
+        `)
+        .eq('vendor_id', id)
+        .order('created_at', { ascending: false }),
+
+      supabase
+        .from('products')
+        .select('*')
+        .eq('vendor_id', id)
+        .order('created_at', { ascending: false }),
+
+      supabase
+        .from('vendor_employees')
+        .select('*')
+        .eq('vendor_id', id)
+        .order('created_at', { ascending: false }),
+
+      supabase
+        .from('bookings')
+        .select('*')
+        .eq('vendor_id', id)
+    ]);
+
+    // Debug: Log services query results
+    if (servicesRes.error) {
+      console.error(`❌ Error fetching services for vendor ${id} from 'services' table:`, servicesRes.error);
+    }
+    console.log(`🔍 Manager - Services query for vendor ${id}:`, {
+      hasError: !!servicesRes.error,
+      error: servicesRes.error?.message,
+      dataCount: servicesRes.data?.length || 0,
+      vendorId: id
+    });
+
+    // Handle service data and fallback
+    let servicesData = servicesRes.data || [];
+
+    // Fallback: If 'services' table returned no data (or error), check 'vendor_services'
+    if (servicesData.length === 0) {
+      console.log(`⚠️ No services found in 'services' table, trying 'vendor_services' (legacy)...`);
+      const { data: servicesFallback, error: servicesFallbackError } = await supabase
+        .from('vendor_services')
+        .select('*')
+        .eq('vendor_id', id)
+        .order('updated_at', { ascending: false });
+
+      if (!servicesFallbackError && servicesFallback && servicesFallback.length > 0) {
+        console.log(`✅ Found ${servicesFallback.length} services in 'vendor_services' table`);
+        servicesData = servicesFallback.map((s: any) => ({
+          ...s,
+          // Map legacy fields to match 'services' schema if needed
+          duration: s.duration_minutes || s.duration,
+          isActive: s.is_active,
+          category: s.category || 'General' // vendor_services might not have relation map
+        }));
+      } else if (servicesFallbackError) {
+        console.warn(`⚠️ Failed to fetch from 'vendor_services':`, servicesFallbackError.message);
+      }
+    }
+
+    console.log(`📊 Manager - Final services count: ${servicesData.length}`);
+    console.log(`📊 Manager - Products count: ${productsRes.data?.length || 0}`);
+    console.log(`📊 Manager - Employees count: ${employeesRes.data?.length || 0}`);
+
+    // Format services
+    const services = servicesData.map((service: any) => ({
+      id: service.id,
+      name: service.name,
+      description: service.description || '',
+      price: service.price,
+      duration: service.duration_minutes || service.duration || 60,
+      category: service.category || 'general',
+      isActive: service.is_active !== undefined ? service.is_active : (service.isActive !== undefined ? service.isActive : true),
+      imageUrl: service.image_url || service.image || null,
+      createdAt: service.created_at || service.createdAt || service.createdat
+    }));
+
+    // Format products
+    const products = (productsRes.data || []).map((product: any) => ({
+      id: product.id,
+      name: product.product_name || product.name,
+      category: product.category_id || product.category || '',
+      price: product.price_cdf || product.price,
+      stock: product.stock_quantity || product.stock || 0,
+      description: product.description || null,
+      imageUrl: product.image_url || product.image || null,
+      isActive: product.is_active !== undefined ? product.is_active : (product.isActive !== undefined ? product.isActive : true),
+      createdAt: product.created_at || product.createdAt
+    }));
+
+    // Format employees
+    const employees = (employeesRes.data || []).map((emp: any) => ({
+      id: emp.id,
+      name: emp.name,
+      role: emp.role,
+      phone: emp.phone,
+      email: emp.email || '',
+      experienceYears: emp.experience_years || emp.experienceYears || 0,
+      specialization: emp.specialization || '',
+      isActive: emp.is_active !== undefined ? emp.is_active : (emp.isActive !== undefined ? emp.isActive : true),
+      status: emp.is_active ? 'ACTIVE' : 'INACTIVE',
+      createdAt: emp.created_at || emp.createdAt
+    }));
+
+
+    const allBookings = bookingsRes.data || [];
+
     // Fetch reviews separately
     let reviews: any[] = [];
     try {
@@ -717,7 +833,6 @@ router.get('/vendors/:id/details', protect, async (req: AuthenticatedRequest, re
     }
 
     // Calculate comprehensive statistics with error handling
-    const allBookings = vendor.bookings || [];
     const completedBookings = allBookings.filter((b: any) => b.status === 'COMPLETED');
     const totalRevenue = completedBookings.reduce((sum: number, booking: any) => {
       const total = booking.total || 0;
@@ -766,50 +881,23 @@ router.get('/vendors/:id/details', protect, async (req: AuthenticatedRequest, re
         email: vendor.user.email || '',
         phone: vendor.user.phone || null
       } : null,
-      services: (vendor.services || []).map((service: any) => ({
-        id: service.id,
-        name: service.name || '',
-        description: service.description || null,
-        price: typeof service.price === 'number' ? service.price : Number(service.price) || 0,
-        duration: service.duration || 0,
-        isActive: service.isActive !== undefined ? service.isActive : true,
-        createdAt: service.createdAt,
-        category: service.categories && service.categories.length > 0 && service.categories[0].category
-          ? service.categories[0].category.name
-          : 'Other'
-      })),
-      products: (vendor.products || []).map((product: any) => ({
-        id: product.id,
-        name: product.name || '',
-        category: product.category || '',
-        price: typeof product.price === 'number' ? product.price : Number(product.price) || 0,
-        stock: product.stock || 0,
-        isActive: product.isActive !== undefined ? product.isActive : true,
-        description: product.description || null
-      })),
-      employees: (vendor.employees || []).map((employee: any) => ({
-        id: employee.id,
-        name: employee.name || '',
-        role: employee.role || '',
-        email: employee.email || '',
-        phone: employee.phone || '',
-        status: employee.status || 'ACTIVE',
-        experience: employee.experience || 0
-      })),
-      bookings: (vendor.bookings || []).map((booking: any) => ({
+      services: services,
+      products: products,
+      employees: employees,
+      bookings: (allBookings || []).map((booking: any) => ({
         id: booking.id,
         customer: booking.customer || null,
-        scheduledDate: booking.scheduledDate || '',
-        scheduledTime: booking.scheduledTime || '',
+        scheduledDate: booking.scheduled_date || booking.scheduledDate || '',
+        scheduledTime: booking.scheduled_time || booking.scheduledTime || '',
         status: booking.status || 'PENDING',
         total: typeof booking.total === 'number' ? booking.total : Number(booking.total) || 0,
-        bookingType: booking.bookingType || 'SALON',
+        bookingType: booking.booking_type || booking.bookingType || 'SALON',
         items: (booking.items || []).map((item: any) => ({
           service: item.service || null,
           quantity: item.quantity || 1,
           price: typeof item.price === 'number' ? item.price : Number(item.price) || 0
         })),
-        createdAt: booking.createdAt
+        createdAt: booking.created_at || booking.createdAt
       })),
       reviews: reviews.map((review: any) => ({
         id: review.id,
@@ -827,12 +915,12 @@ router.get('/vendors/:id/details', protect, async (req: AuthenticatedRequest, re
         monthlyRevenue: monthlyRevenue,
         averageRating: Math.round(averageRating * 10) / 10,
         totalReviews: reviews.length,
-        totalServices: vendor.services?.length || 0,
-        activeServices: vendor.services?.filter((s: any) => s.isActive).length || 0,
-        totalProducts: vendor.products?.length || 0,
-        activeProducts: vendor.products?.filter((p: any) => p.isActive).length || 0,
-        totalEmployees: vendor.employees?.length || 0,
-        activeEmployees: vendor.employees?.filter((e: any) => e.status === 'ACTIVE').length || 0
+        totalServices: services.length,
+        activeServices: services.filter((s: any) => s.isActive).length,
+        totalProducts: products.length,
+        activeProducts: products.filter((p: any) => p.isActive).length,
+        totalEmployees: employees.length,
+        activeEmployees: employees.filter((e: any) => e.isActive || e.status === 'ACTIVE').length
       }
     };
 
@@ -1335,29 +1423,72 @@ router.get('/vendors/:vendorId/services', protect, async (req: AuthenticatedRequ
 
     console.log(`📋 Manager fetching services for vendor: ${vendorId}`);
 
-    const { data: services, error } = await supabase
+    // Try vendor_services table first, with updated_at (not createdat)
+    let { data: services, error } = await supabase
       .from('vendor_services')
       .select('*')
       .eq('vendor_id', vendorId)
-      .order('createdat', { ascending: false });
+      .order('updated_at', { ascending: false });
 
-    if (error) throw error;
+    // If vendor_services fails with column error, try services table
+    if (error && error.code === '42703') {
+      console.log(`⚠️ Column error in vendor_services, trying 'services' table...`);
+      const servicesResult = await supabase
+        .from('services')
+        .select(`
+          *,
+          categories:service_category_map (
+            category:service_categories (id, name)
+          )
+        `)
+        .eq('vendor_id', vendorId)
+        .order('created_at', { ascending: false });
 
-    // Transform to frontend format (consistent with admin/vendor)
+      if (servicesResult.error) {
+        throw servicesResult.error;
+      }
+      services = servicesResult.data || [];
+      error = null;
+    } else if (error) {
+      throw error;
+    }
+
+    // If vendor_services returns empty, try services table as fallback
+    if ((!services || services.length === 0) && !error) {
+      console.log(`⚠️ No services found in vendor_services, trying 'services' table...`);
+      const servicesResult = await supabase
+        .from('services')
+        .select(`
+          *,
+          categories:service_category_map (
+            category:service_categories (id, name)
+          )
+        `)
+        .eq('vendor_id', vendorId)
+        .order('created_at', { ascending: false });
+
+      if (!servicesResult.error) {
+        services = servicesResult.data || [];
+      }
+    }
+
+    // Transform to frontend format - handle both vendor_services and services table schemas
     const transformedServices = (services || []).map((service: any) => ({
       id: service.id,
       name: service.name,
-      description: service.description,
+      description: service.description || '',
       price: service.price,
-      duration: service.duration_minutes,
-      category: service.category,
-      imageUrl: service.image_url,
-      tags: service.tags,
-      genderPreference: service.gender_preference,
-      isActive: service.is_active,
-      vendorId: service.vendor_id,
-      createdAt: service.createdat,
-      updatedAt: service.updatedat
+      // Handle both duration_minutes (vendor_services) and duration (services)
+      duration: service.duration_minutes || service.duration || 60,
+      // Handle category - services table uses categories relation, vendor_services may have direct category
+      category: service.category || (service.categories && service.categories[0]?.category?.name) || 'general',
+      imageUrl: service.image_url || service.image || null,
+      tags: service.tags || [],
+      genderPreference: service.gender_preference || service.genderPreference || 'UNISEX',
+      isActive: service.is_active !== undefined ? service.is_active : (service.isActive !== undefined ? service.isActive : true),
+      vendorId: service.vendor_id || service.vendorId,
+      createdAt: service.createdat || service.created_at || service.createdAt,
+      updatedAt: service.updatedat || service.updated_at || service.updatedAt
     }));
 
     res.json({
@@ -1366,7 +1497,7 @@ router.get('/vendors/:vendorId/services', protect, async (req: AuthenticatedRequ
     });
   } catch (error: any) {
     console.error('Error fetching vendor services:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch services' });
+    res.status(500).json({ success: false, message: 'Failed to fetch services', error: error.message });
   }
 });
 

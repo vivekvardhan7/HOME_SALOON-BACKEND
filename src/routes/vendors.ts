@@ -202,21 +202,17 @@ router.get('/verify', async (req, res) => {
 });
 
 // Get vendor by ID with full details
+// Get vendor by ID with full details
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
 
+    // Fetch vendor basic details
     const { data: vendor, error } = await supabase
       .from('vendor')
       .select(`
         *,
-        user:users!user_id (*),
-        services:services (
-          *,
-          categories:service_category_map (
-            category:service_categories (*)
-          )
-        )
+        user:users!user_id (*)
       `)
       .eq('id', id)
       .single();
@@ -225,98 +221,124 @@ router.get('/:id', async (req, res) => {
       return res.status(404).json({ error: 'Vendor not found' });
     }
 
-    // Get beauticians (users with BEAUTICIAN role associated with this vendor)
-    // Mock for now as relation might not exist
-    const { data: beauticians } = await supabase
-      .from('users')
-      .select('*')
-      .eq('role', 'BEAUTICIAN')
-      .limit(5);
+    console.log(`✅ Found vendor raw:`, vendor);
 
-    // Mock beautician data with vendor association
-    const mockBeauticians = (beauticians || []).map((beautician: any) => ({
-      id: beautician.id,
-      name: `${beautician.first_name} ${beautician.last_name}`,
-      specialization: ['Hair Styling', 'Facial Treatments', 'Makeup'].slice(0, Math.floor(Math.random() * 3) + 1),
-      rating: 4.5 + Math.random() * 0.5,
-      experience: Math.floor(Math.random() * 10) + 1,
-      avatar: '/api/placeholder/100/100',
-      isAvailable: Math.random() > 0.3,
-      nextAvailableSlot: 'Today 3:00 PM'
+    // Explicitly check for frequent variations of shop name
+    const shopName = vendor.shop_name || vendor.shopName || vendor.shopname || vendor.business_name || vendor.user?.full_name || 'Unknown Vendor';
+    console.log(`✅ Resolved Shop Name: ${shopName}`);
+
+
+    // Fetch services, products, employees in parallel
+    const [servicesRes, productsRes, employeesRes] = await Promise.all([
+      // Try fetching from 'services' table first (primary source)
+      supabase
+        .from('services')
+        .select(`
+          *,
+          categories:service_category_map (
+            category:service_categories (*)
+          )
+        `)
+        .eq('vendor_id', id)
+        .eq('is_active', true),
+
+      // Fetch products
+      supabase
+        .from('products')
+        .select('*')
+        .eq('vendor_id', id)
+        .eq('is_active', true)
+        .gt('stock_quantity', 0), // Only show in-stock products for customers
+
+      // Fetch employees
+      supabase
+        .from('vendor_employees')
+        .select('*')
+        .eq('vendor_id', id)
+        .eq('is_active', true)
+    ]);
+
+    // Handle services
+    let services = servicesRes.data || [];
+
+    // Fallback: If 'services' table is empty, try 'vendor_services' for legacy support
+    if (services.length === 0) {
+      const { data: legacyServices } = await supabase
+        .from('vendor_services')
+        .select('*')
+        .eq('vendor_id', id);
+
+      if (legacyServices && legacyServices.length > 0) {
+        services = legacyServices.map((s: any) => ({
+          ...s,
+          // map legacy fields if needed
+          duration: s.duration_minutes || s.duration,
+          isActive: s.is_active
+        }));
+      }
+    }
+
+    // Format services
+    const formattedServices = services.map((service: any) => ({
+      id: service.id,
+      name: service.name,
+      description: service.description,
+      duration: service.duration,
+      price: service.price,
+      category: service.categories?.[0]?.category?.name || service.category || 'General',
+      image: service.image || service.image_url || null, // No placeholder
+      isAvailable: service.is_active !== undefined ? service.is_active : true
     }));
 
-    // Mock products
-    const mockProducts = [
-      {
-        id: '1',
-        name: 'Premium Hair Shampoo',
-        description: 'Professional grade shampoo for all hair types',
-        price: 25,
-        image: '/api/placeholder/150/150',
-        inStock: true,
-        category: 'hair'
-      },
-      {
-        id: '2',
-        name: 'Anti-Aging Face Cream',
-        description: 'Luxury face cream with anti-aging properties',
-        price: 45,
-        image: '/api/placeholder/150/150',
-        inStock: true,
-        category: 'face'
-      },
-      {
-        id: '3',
-        name: 'Nail Art Kit',
-        description: 'Complete nail art kit with tools and colors',
-        price: 35,
-        image: '/api/placeholder/150/150',
-        inStock: false,
-        category: 'nail'
-      }
-    ];
+    // Format products
+    const formattedProducts = (productsRes.data || []).map((product: any) => ({
+      id: product.id,
+      name: product.product_name || product.name,
+      description: product.description,
+      price: product.price_cdf || product.price,
+      image: product.image_url || product.image || null, // No placeholder
+      inStock: (product.stock_quantity || product.stock || 0) > 0,
+      category: product.category_id || product.category || 'General'
+    }));
+
+    // Format employees (beauticians)
+    const formattedBeauticians = (employeesRes.data || []).map((emp: any) => ({
+      id: emp.id,
+      name: emp.name,
+      role: emp.role,
+      specialization: emp.specialization ? (Array.isArray(emp.specialization) ? emp.specialization : [emp.specialization]) : [],
+      rating: null, // No fake rating
+      experience: emp.experience_years || 0,
+      avatar: emp.avatar_url || null, // No placeholder
+      isAvailable: emp.is_active,
+      nextAvailableSlot: null // No fake slot
+    }));
 
     const transformedVendor = {
       id: vendor.id,
-      name: vendor.shopName,
+      name: shopName,
       description: vendor.description,
       address: vendor.address,
       city: vendor.city,
-      rating: 4.5 + Math.random() * 0.5,
-      reviewCount: Math.floor(Math.random() * 200) + 50,
-      distance: Math.random() * 5,
-      categories: vendor.services?.flatMap((service: any) =>
-        service.categories?.map((cat: any) => cat.category?.name?.toLowerCase()) || []
-      ).filter((value: any, index: any, self: any) => self.indexOf(value) === index) || [],
-      images: ['/api/placeholder/800/400', '/api/placeholder/800/400'],
-      isOpen: Math.random() > 0.2,
-      nextAvailableSlot: 'Today 2:00 PM',
-      phone: vendor.user?.phone || '+1 (555) 123-4567',
-      email: vendor.user?.email,
-      workingHours: {
-        'Monday': '9:00 AM - 7:00 PM',
-        'Tuesday': '9:00 AM - 7:00 PM',
-        'Wednesday': '9:00 AM - 7:00 PM',
-        'Thursday': '9:00 AM - 7:00 PM',
-        'Friday': '9:00 AM - 8:00 PM',
-        'Saturday': '8:00 AM - 6:00 PM',
-        'Sunday': '10:00 AM - 5:00 PM'
-      }
+      rating: null, // No fake rating. TODO: Implement real rating calculation from params
+      reviewCount: 0, // TODO: Implement real count
+      distance: null, // Client-side calculation or requires coordinates
+      categories: [...new Set(formattedServices.map((s: any) => s.category))],
+      images: vendor.images || [], // No placeholder
+      isOpen: true, // TODO: Calculate from working hours
+      nextAvailableSlot: null, // No fake slot
+      phone: vendor.user?.phone || null,
+      email: vendor.user?.email || null,
+      workingHours: vendor.working_hours || {}
     };
 
     res.json({
       vendor: transformedVendor,
-      services: vendor.services?.map((service: any) => ({
-        id: service.id,
-        name: service.name,
-        description: service.description,
-        duration: service.duration,
-        price: service.price,
-        category: service.categories?.[0]?.category?.name?.toLowerCase() || 'general'
-      })) || [],
-      beauticians: mockBeauticians,
-      products: mockProducts
+      services: formattedServices,
+      beauticians: formattedBeauticians,
+      products: formattedProducts
     });
+
   } catch (error) {
     console.error('Error fetching vendor details:', error);
     res.status(500).json({ error: 'Internal server error' });
