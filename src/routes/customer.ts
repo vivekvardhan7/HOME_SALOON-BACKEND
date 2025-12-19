@@ -845,4 +845,77 @@ router.get('/payments', requireAuth, requireRole(['CUSTOMER']), async (req: Auth
   }
 });
 
+
+// ==================== AT-HOME SERVICES – PHASE 1 (CUSTOMER) ====================
+
+/**
+ * @api {get} /api/customer/athome/services Get At-Home Services (Customer)
+ * @apiDescription Rules: Fetch ONLY from admin tables, Filter: is_active = true
+ */
+router.get('/athome/services', requireAuth, requireRole(['CUSTOMER']), async (req, res) => {
+  try {
+    console.log('🏠 Fetching active At-Home services for customer...');
+
+    // Fetch ONLY from admin tables
+    // Filter: is_active = true
+    const { data, error } = await supabase
+      .from('admin_services')
+      .select('*')
+      .eq('is_active', true)
+      .order('name', { ascending: true });
+
+    if (error) {
+      console.error('❌ Supabase error fetching at-home services:', error);
+      throw error;
+    }
+
+    res.json({
+      success: true,
+      data: data || []
+    });
+  } catch (error: any) {
+    console.error('SERVER ERROR (Customer At-Home Services):', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch available at-home services',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @api {get} /api/customer/athome/products Get At-Home Products (Customer)
+ * @apiDescription Rules: Fetch ONLY from admin tables, Filter: is_active = true
+ */
+router.get('/athome/products', requireAuth, requireRole(['CUSTOMER']), async (req, res) => {
+  try {
+    console.log('📦 Fetching active At-Home products for customer...');
+
+    // Fetch ONLY from admin tables
+    // Filter: is_active = true
+    const { data, error } = await supabase
+      .from('admin_products')
+      .select('*')
+      .eq('is_active', true)
+      .order('name', { ascending: true });
+
+    if (error) {
+      console.error('❌ Supabase error fetching at-home products:', error);
+      throw error;
+    }
+
+    res.json({
+      success: true,
+      data: data || []
+    });
+  } catch (error: any) {
+    console.error('SERVER ERROR (Customer At-Home Products):', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch available at-home products',
+      error: error.message
+    });
+  }
+});
+
 export default router;

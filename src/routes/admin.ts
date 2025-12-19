@@ -1278,4 +1278,195 @@ router.delete('/services/:serviceId', protect, async (req, res) => {
 
 
 
+
+// ==================== AT-HOME SERVICES – PHASE 1 (ADMIN) ====================
+
+/**
+ * @api {get} /api/admin/vendor-catalog/services Get Vendor Services Reference
+ * @apiDescription Admin must: 1. See all vendor services (read-only reference)
+ */
+router.get('/vendor-catalog/services', protect, async (req, res) => {
+  try {
+    console.log('🔍 Fetching all vendor services as reference...');
+
+    // Joint logic: FROM vendor_services JOIN vendors ONLY to get vendor.shop_name
+    const { data: services, error } = await supabase
+      .from('vendor_services')
+      .select(`
+        name,
+        category,
+        price,
+        duration_minutes,
+        vendor:vendor!vendor_id (shopname)
+      `);
+
+    if (error) {
+      console.error('❌ Supabase error fetching vendor services:', error);
+      throw error;
+    }
+
+    // Response structure as requested: [{ name, category, price, duration_minutes, vendor_name }]
+    const response = (services || []).map((s: any) => ({
+      name: s.name,
+      category: s.category,
+      price: s.price,
+      duration_minutes: s.duration_minutes,
+      vendor_name: s.vendor?.shopname || 'Unknown Vendor'
+    }));
+
+    res.json(response);
+  } catch (error: any) {
+    console.error('SERVER ERROR (Vendor Catalog Services):', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch vendor services catalog',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @api {get} /api/admin/vendor-catalog/products Get Vendor Products Reference
+ * @apiDescription Admin must: 2. See all vendor products (read-only reference)
+ */
+router.get('/vendor-catalog/products', protect, async (req, res) => {
+  try {
+    console.log('🔍 Fetching all vendor products as reference...');
+
+    // Logic: FROM products JOIN vendors to get shop_name
+    // Using mapping for product name/price based on existing schema observed in admin.ts
+    const { data: products, error } = await supabase
+      .from('products')
+      .select(`
+        product_name,
+        price_cdf,
+        vendor:vendor!vendor_id (shopname)
+      `);
+
+    if (error) {
+      console.error('❌ Supabase error fetching vendor products:', error);
+      throw error;
+    }
+
+    // SELECT: product name, price, vendor.shop_name
+    const response = (products || []).map((p: any) => ({
+      name: p.product_name || 'Unnamed Product',
+      price: p.price_cdf || 0,
+      vendor_name: p.vendor?.shopname || 'Unknown Vendor'
+    }));
+
+    res.json(response);
+  } catch (error: any) {
+    console.error('SERVER ERROR (Vendor Catalog Products):', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch vendor products catalog',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @api {get} /api/admin/athome/services Get Admin's Master Catalog of Services
+ */
+router.get('/athome/services', protect, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('admin_services')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    res.json({ success: true, data });
+  } catch (error: any) {
+    console.error('Error fetching master services:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch master service catalog' });
+  }
+});
+
+/**
+ * @api {post} /api/admin/athome/services Add new Master At-Home Service
+ */
+router.post('/athome/services', protect, async (req, res) => {
+  try {
+    const { name, description, category, price, duration_minutes, image_url, is_active } = req.body;
+
+    // Insert ONLY into admin_services
+    // NEVER reference vendor tables
+    const { data, error } = await supabase
+      .from('admin_services')
+      .insert([{
+        name,
+        description,
+        category,
+        price: Number(price),
+        duration_minutes: Number(duration_minutes),
+        image_url,
+        is_active: is_active ?? true
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.status(201).json({ success: true, data });
+  } catch (error: any) {
+    console.error('Error creating master service:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create service in master catalog',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * @api {get} /api/admin/athome/products Get Admin's Master Catalog of Products
+ */
+router.get('/athome/products', protect, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('admin_products')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+    res.json({ success: true, data });
+  } catch (error: any) {
+    console.error('Error fetching master products:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch master product catalog' });
+  }
+});
+
+/**
+ * @api {post} /api/admin/athome/products Add new Master At-Home Product
+ */
+router.post('/athome/products', protect, async (req, res) => {
+  try {
+    const { name, description, price, image_url, is_active } = req.body;
+
+    // Insert ONLY into admin_products
+    const { data, error } = await supabase
+      .from('admin_products')
+      .insert([{
+        name,
+        description,
+        price: Number(price),
+        image_url,
+        is_active: is_active ?? true
+      }])
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.status(201).json({ success: true, data });
+  } catch (error: any) {
+    console.error('Error creating master product:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to create product in master catalog',
+      error: error.message
+    });
+  }
+});
+
 export default router;
