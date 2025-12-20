@@ -583,28 +583,28 @@ model AccessLog {
   @@map("access_logs")
 }
 
-model VendorAssignment {
-  id          String   @id @default(cuid())
-  bookingId   String
-  vendorId    String
-  employeeId  String?
-  status      String   @default("PENDING") // PENDING, ASSIGNED, IN_PROGRESS, COMPLETED
-  vendorNotes String?
-  
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Relations
-  booking   Booking    @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  vendor    Vendor     @relation(fields: [vendorId], references: [id])
-  employee  Employee?  @relation(fields: [employeeId], references: [id])
-  items     BookingItem[]
-  products  BookingProduct[]
-
-  @@unique([bookingId, vendorId])
-  @@index([bookingId])
-  @@index([vendorId])
-  @@index([employeeId])
-  @@map("vendor_assignments")
-}
+// model VendorAssignment {
+//   id          String   @id @default(cuid())
+//   bookingId   String
+//   vendorId    String
+//   employeeId  String?
+//   status      String   @default("PENDING") // PENDING, ASSIGNED, IN_PROGRESS, COMPLETED
+//   vendorNotes String?
+//   
+//   createdAt   DateTime @default(now())
+//   updatedAt   DateTime @updatedAt
+// 
+//   // Relations
+//   booking   Booking    @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+//   vendor    Vendor     @relation(fields: [vendorId], references: [id])
+//   employee  Employee?  @relation(fields: [employeeId], references: [id])
+//   // items     BookingItem[]
+//   // products  BookingProduct[]
+// 
+//   @@unique([bookingId, vendorId])
+//   @@index([bookingId])
+//   @@index([vendorId])
+//   @@index([employeeId])
+//   @@map("vendor_assignments")
+// }
 
