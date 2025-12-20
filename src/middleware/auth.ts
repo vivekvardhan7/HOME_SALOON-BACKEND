@@ -64,7 +64,7 @@ export const authenticate = async (
 
     if (token === 'static-manager-token') {
       req.user = {
-        id: 'manager-static-id',
+        id: '22222222-2222-2222-2222-222222222222',
         email: 'manager@homebonzenga.com',
         role: 'MANAGER'
       };
@@ -73,7 +73,7 @@ export const authenticate = async (
 
     if (token === 'static-admin-token') {
       req.user = {
-        id: 'admin-static-id',
+        id: '11111111-1111-1111-1111-111111111111',
         email: 'admin@homebonzenga.com',
         role: 'ADMIN'
       };
@@ -109,18 +109,18 @@ export const authenticate = async (
     }
 
     // Handle static admin and manager users (skip database lookup)
-    if (userId === 'admin-static-id' && role === 'ADMIN') {
+    if ((userId === 'admin-static-id' || userId === '11111111-1111-1111-1111-111111111111') && role === 'ADMIN') {
       req.user = {
-        id: 'admin-static-id',
+        id: '11111111-1111-1111-1111-111111111111',
         email: email || 'admin@homebonzenga.com',
         role: 'ADMIN'
       };
       return next();
     }
 
-    if (userId === 'manager-static-id' && role === 'MANAGER') {
+    if ((userId === 'manager-static-id' || userId === '22222222-2222-2222-2222-222222222222') && role === 'MANAGER') {
       req.user = {
-        id: 'manager-static-id',
+        id: '22222222-2222-2222-2222-222222222222',
         email: email || 'manager@homebonzenga.com',
         role: 'MANAGER'
       };
@@ -190,7 +190,7 @@ export const authenticateManager = async (
     // 1. Static Token Bypass (Legacy support if needed)
     if (token === 'static-manager-token') {
       req.user = {
-        id: 'manager-static-id',
+        id: '22222222-2222-2222-2222-222222222222',
         email: 'manager@homebonzenga.com',
         role: 'MANAGER'
       };
@@ -209,7 +209,7 @@ export const authenticateManager = async (
 
       // 4. Set User Context (NO DB LOOKUP)
       req.user = {
-        id: payload.userId || 'manager-id',
+        id: payload.userId || '22222222-2222-2222-2222-222222222222',
         email: payload.email,
         role: 'MANAGER'
       };

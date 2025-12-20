@@ -77,249 +77,165 @@ router.get('/', authenticateManager, async (req: AuthenticatedRequest, res) => {
     }
 });
 
-// 2. Get Eligible Vendors for a Booking
-router.get('/:id/eligible-vendors', authenticateManager, async (req: AuthenticatedRequest, res) => {
+// 2. Get Eligible Beauticians for a Booking
+router.get('/:id/eligible-beauticians', authenticateManager, async (req: AuthenticatedRequest, res) => {
     try {
         const { id } = req.params;
 
-        console.log(`[Manager] Fetching eligible vendors for booking ${id}`);
+        console.log(`[Manager] Fetching eligible beauticians for booking ${id}`);
 
-        const { data: booking, error: bookingError } = await supabase
-            .from('athome_bookings')
-            .select('*')
-            .eq('id', id)
-            .single();
-
-        if (bookingError || !booking) {
-            console.error('Error fetching booking main details:', bookingError);
-            return res.status(404).json({ success: false, message: 'Booking not found' });
-        }
-
-        const { data: bookingServices, error: bsError } = await supabase
+        // 1. Fetch Booking Services/Products to determine needs
+        const { data: bookingServices } = await supabase
             .from('athome_booking_services')
-            .select('*')
+            .select('*, master:admin_services!athome_booking_services_admin_service_id_fkey(name, category)')
             .eq('booking_id', id);
 
-        if (bsError) throw bsError;
-
-        const { data: bookingProducts, error: bpError } = await supabase
+        const { data: bookingProducts } = await supabase
             .from('athome_booking_products')
-            .select('*')
+            .select('*, master:admin_products!athome_booking_products_admin_product_id_fkey(name, category)')
             .eq('booking_id', id);
 
-        if (bpError) throw bpError;
-
-        const adminServiceIds = (bookingServices || []).map((s: any) => s.admin_service_id).filter(Boolean);
-        const adminProductIds = (bookingProducts || []).map((p: any) => p.admin_product_id).filter(Boolean);
-
-        let serviceCategories = new Set<string>();
-        let productCategories = new Set<string>();
-
-        if (adminServiceIds.length > 0) {
-            const { data: adminServices } = await supabase
-                .from('admin_services')
-                .select('id, name, category')
-                .in('id', adminServiceIds);
-
-            adminServices?.forEach((as: any) => {
-                if (as.category) serviceCategories.add(as.category);
-            });
-        }
-
-        if (adminProductIds.length > 0) {
-            const { data: adminProducts } = await supabase
-                .from('admin_products')
-                .select('id, name, category')
-                .in('id', adminProductIds);
-
-            adminProducts?.forEach((ap: any) => {
-                if (ap.category) productCategories.add(ap.category);
-            });
-        }
-
-        console.log('Target Service Categories:', Array.from(serviceCategories));
-        console.log('Target Product Categories:', Array.from(productCategories));
-
-        // Helper: Fetch Vendors & Items With Robust Multi-Level Fallback
-        const fetchVendorsWithItems = async (itemIds: string[], categoryIds: string[], isProduct: boolean) => {
-            let targetVendorIds: string[] = [];
-            let matchType = 'match';
-            const itemTable = isProduct ? 'vendor_products' : 'vendor_services';
-            const fkCol = isProduct ? 'admin_product_id' : 'admin_service_id';
-
-            // LEVEL 0: Strict Admin Item ID Match (Best Match)
-            if (itemIds.length > 0) {
-                const { data: matches } = await supabase
-                    .from(itemTable)
-                    .select('vendor_id')
-                    .in(fkCol, itemIds);
-
-                (matches || []).forEach((m: any) => targetVendorIds.push(m.vendor_id));
-            }
-
-            // LEVEL 1: Soft Category Match (ILIKE)
-            if (categoryIds.length > 0) {
-                const orConditions = categoryIds.map(c => `category.ilike.%${c}%`).join(',');
-                const { data: matches } = await supabase
-                    .from(itemTable)
-                    .select('vendor_id')
-                    .or(orConditions);
-
-                (matches || []).forEach((m: any) => targetVendorIds.push(m.vendor_id));
-            }
-
-            targetVendorIds = Array.from(new Set(targetVendorIds));
-
-            // LEVEL 2 & 3: Fallback - Fetch ALL Approved Vendors if no match found
-            if (targetVendorIds.length === 0) {
-                console.log(`[Manager] Level 0/1 (ID/Category Match) yielded 0 vendors for ${isProduct ? 'Product' : 'Service'}. Triggering FALLBACK to ALL.`);
-                matchType = 'fallback';
-
-                const { data: all } = await supabase
-                    .from('vendor')
-                    .select('id')
-                    .ilike('status', 'approved');
-
-                (all || []).forEach((v: any) => targetVendorIds.push(v.id));
-            }
-
-            if (targetVendorIds.length === 0) {
-                console.warn('[Manager] CRITICAL: No approved vendors found in system at all.');
-                return [];
-            }
-
-            // 3. Fetch Vendor Details (NO GENDER)
-            const { data: vendors, error: vError } = await supabase
-                .from('vendor')
-                .select(`
-            id, shopname, status, address, city,
-            user:users!vendors_user_id_fkey (first_name, last_name)
-        `)
-                .in('id', targetVendorIds)
-                .ilike('status', 'approved');
-
-            if (vError) {
-                console.error('Error fetching vendors:', vError);
-                return [];
-            }
-
-            // 4. Fetch Items Manually for Inventory Display
-            const { data: rawItems } = await supabase
-                .from(itemTable)
-                .select('*')
-                .in('vendor_id', targetVendorIds);
-
-            // 5. Resolve Names (Manual Join)
-            const startTable = isProduct ? 'admin_products' : 'admin_services';
-
-            const masterIds = Array.from(new Set((rawItems || []).map((i: any) => i[fkCol]).filter(Boolean)));
-            let masterNameMap: Record<string, string> = {};
-
-            if (masterIds.length > 0) {
-                const { data: masters } = await supabase.from(startTable).select('id, name').in('id', masterIds);
-                (masters || []).forEach((m: any) => masterNameMap[m.id] = m.name);
-            }
-
-            // 6. Attach Items and Match Type
-            return (vendors || []).map((v: any) => {
-                const vendorItems = (rawItems || []).filter((i: any) => i.vendor_id === v.id);
-                const mappedItems = vendorItems.map((i: any) => ({
-                    name: masterNameMap[i[fkCol]] || 'Unknown Item'
-                    // removed price from backend view per UI request to clean up
-                }));
-                const uniqueItemNames = Array.from(new Set(mappedItems.map((i: any) => i.name))).join(', ');
-
-                return {
-                    ...v,
-                    // Per user request: Show city / area in smaller text
-                    // Use city if available, else address (usually longer)
-                    location: v.city ? v.city : (v.address || 'Unknown'),
-                    items: mappedItems,
-                    inventory: uniqueItemNames || 'No specific items listed',
-                    match_type: matchType
-                };
-            });
-        };
-
-        const serviceVendorsList = await fetchVendorsWithItems(adminServiceIds, Array.from(serviceCategories), false);
-        const productVendorsList = await fetchVendorsWithItems(adminProductIds, Array.from(productCategories), true);
-
-        const mapVendorToOutput = (v: any) => ({
-            id: v.id,
-            shopname: v.shopname,
-            shopName: v.shopname,
-            // Only shopname per UI request (removed ownerName from dropdown label logic in frontend, but keeping data here just in case)
-            ownerName: v.user ? `${v.user.first_name || ''} ${v.user.last_name || ''}`.trim() : 'Unknown',
-            location: v.location, // Already formatted above
-            matchType: v.match_type,
-            inventory: v.inventory
+        // 2. Determine Required Skills
+        // Heuristic: Use service names and categories as keywords
+        let keywords = new Set<string>();
+        (bookingServices || []).forEach((s: any) => {
+            if (s.master?.name) keywords.add(s.master.name.toLowerCase());
+            if (s.master?.category) keywords.add(s.master.category.toLowerCase());
         });
+        // Products usually don't dictate beautician skills as much as services, but can add context if needed.
+
+        const requiredKeywords = Array.from(keywords);
+        console.log('[Manager] Required Keywords for Beautician:', requiredKeywords);
+
+        // 3. Fetch All Active Beauticians
+        const { data: beauticians, error: bError } = await supabase
+            .from('beauticians')
+            .select('*')
+            .eq('status', 'ACTIVE');
+
+        if (bError) throw bError;
+
+        // 4. Client-Side filtering for "ILIKE" style skill matching
+        // Database allows simple ILIKE, but multiple keywords are easier to handle in JS for this scale
+        let eligible = (beauticians || []).map((b: any) => {
+            const bSkills = (b.skills || '').toLowerCase();
+            // Score the beautician: how many keywords match?
+            let score = 0;
+            let matchedSkills: string[] = [];
+            requiredKeywords.forEach(k => {
+                if (bSkills.includes(k)) {
+                    score++;
+                    matchedSkills.push(k);
+                }
+            });
+
+            // Special case: "Hair" matches "Hair Cut", etc.
+            // If keywords is empty (rare), allow all.
+            const isMatch = requiredKeywords.length === 0 || score > 0;
+
+            return {
+                ...b,
+                matchScore: score,
+                matchedSkills: matchedSkills,
+                isMatch
+            };
+        });
+
+        // 5. Sort by best match (highest score)
+        eligible.sort((a: any, b: any) => b.matchScore - a.matchScore);
+
+        // Filter out zero matches if we have requirements
+        if (requiredKeywords.length > 0) {
+            eligible = eligible.filter((b: any) => b.isMatch);
+        }
+
+        // 6. Format for Frontend
+        // Fallback: If no matches, return ALL active beauticians but marked as "Weak Match"
+        if (eligible.length === 0 && requiredKeywords.length > 0) {
+            console.log('[Manager] No direct skill matches found. Returning all active beauticians as fallback.');
+            eligible = (beauticians || []).map((b: any) => ({ ...b, matchScore: 0, isMatch: false, matchType: 'Fallback' }));
+        }
 
         res.json({
             success: true,
-            data: {
-                serviceVendors: serviceVendorsList.map(mapVendorToOutput),
-                productVendors: productVendorsList.map(mapVendorToOutput)
-            }
+            data: eligible.map((b: any) => ({
+                id: b.id,
+                name: b.name,
+                expert_level: b.expert_level,
+                skills: b.skills,
+                phone: b.phone,
+                matchType: b.matchScore > 0 ? 'Skills Match' : 'Available',
+                score: b.matchScore
+            }))
         });
 
     } catch (error: any) {
-        console.error('Error fetching eligible vendors:', error);
-        res.status(500).json({ success: false, message: 'Failed to fetch vendors', error: error.message });
+        console.error('Error fetching eligible beauticians:', error);
+        res.status(500).json({ success: false, message: 'Failed to fetch beauticians', error: error.message });
     }
 });
 
-// 3. Assign Vendor to Booking
+// 3. Assign Assgined Beautician to Booking
 router.post('/:id/assign', authenticateManager, async (req: AuthenticatedRequest, res) => {
     try {
         const { id } = req.params;
-        const { service_vendor_id, product_vendor_id } = req.body;
+        const { beautician_id } = req.body;
 
-        if (!service_vendor_id && !product_vendor_id) {
-            console.warn(`[Manager] Assign failed: No vendors selected for booking ${id}`);
-            return res.status(400).json({ success: false, message: 'Please select a vendor for services or products.' });
+        if (!beautician_id) {
+            return res.status(400).json({ success: false, message: 'Beautician ID is required.' });
         }
 
-        console.log(`Assigning vendors for booking ${id}: ServiceVendor=${service_vendor_id || 'None'}, ProductVendor=${product_vendor_id || 'None'}`);
+        console.log(`[Manager] Assigning Beautician ${beautician_id} to Booking ${id}`);
 
-        if (service_vendor_id) {
-            const { error: sError } = await supabase
-                .from('athome_booking_services')
-                .update({
-                    assigned_vendor_id: service_vendor_id,
-                    status: 'ASSIGNED'
-                })
-                .eq('booking_id', id);
-
-            if (sError) throw sError;
-        }
-
-        if (product_vendor_id) {
-            // Note: athome_booking_products does not have 'assigned_vendor_id' column in current schema.
-            // We only update status to ASSIGNED.
-            const { error: pError } = await supabase
-                .from('athome_booking_products')
-                .update({
-                    // assigned_vendor_id: product_vendor_id, // Column does not exist
-                    status: 'ASSIGNED'
-                })
-                .eq('booking_id', id);
-
-            if (pError) throw pError;
-        }
-
-        const { error: mError } = await supabase
+        // 1. Update Booking Master
+        const { error: bError } = await supabase
             .from('athome_bookings')
-            .update({ status: 'ASSIGNED' })
+            .update({
+                assigned_beautician_id: beautician_id,
+                status: 'ASSIGNED' // Direct assignment
+            })
             .eq('id', id);
 
-        if (mError) throw mError;
+        if (bError) throw bError;
 
-        res.json({ success: true, message: 'Vendors assigned successfully' });
+        // 2. Update Booking Services
+        const { error: sError } = await supabase
+            .from('athome_booking_services')
+            .update({
+                assigned_beautician_id: beautician_id,
+                status: 'ASSIGNED'
+            })
+            .eq('booking_id', id);
+
+        if (sError) throw sError;
+
+        // 3. Update Booking Products
+        // Note: Check if column exists, we already added it in the SQL script phase
+        const { error: pError } = await supabase
+            .from('athome_booking_products')
+            .update({
+                assigned_beautician_id: beautician_id,
+                status: 'ASSIGNED'
+            })
+            .eq('booking_id', id);
+
+        if (pError) throw pError;
+
+        // 4. Create Initial Live Update (Optional but good)
+        await supabase
+            .from('booking_live_updates')
+            .insert([{
+                booking_id: id,
+                beautician_id: beautician_id,
+                status: 'ASSIGNED',
+                customer_visible: true
+            }]);
+
+        res.json({ success: true, message: 'Beautician assigned successfully.' });
 
     } catch (error: any) {
-        console.error('Error assigning vendors:', error);
-        res.status(500).json({ success: false, message: 'Failed to assign vendors', error: error.message });
+        console.error('Error assigning beautician:', error);
+        res.status(500).json({ success: false, message: 'Failed to assign beautician', error: error.message });
     }
 });
 

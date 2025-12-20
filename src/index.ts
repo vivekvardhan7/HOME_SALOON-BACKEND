@@ -86,6 +86,7 @@ import vendorBookingsRoutes from './routes/vendor-bookings';
 import vendorProductsRoutes from './routes/vendor-products';
 import vendorServicesRoutes from './routes/vendor-services';
 import adminRoutes from './routes/admin';
+import adminBeauticianRoutes from './routes/admin-beauticians'; // Added
 import customerRoutes from './routes/customer';
 import catalogRoutes from './routes/catalog';
 import vendorEmployeesRoutes from "./routes/vendor-employees";
@@ -109,6 +110,7 @@ app.use('/api/manager/bookings', managerBookingsRoutes);
 app.use('/api/manager/athome-bookings', managerAthomeBookingsRoutes); // Added
 app.use('/api/manager', managerHealthRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/admin/beauticians', adminBeauticianRoutes); // Added new route for Phase 3
 app.use('/api/customer', customerRoutes);
 app.use('/api/catalog', catalogRoutes);
 
