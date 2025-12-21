@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { supabase } from '../lib/supabase';
-import { requireAuth, requireRole, AuthenticatedRequest } from '../middleware/auth';
+import { requireAuth, requireRole, AuthenticatedRequest, authenticateManager } from '../middleware/auth';
+import { sendBookingConfirmationEmail } from '../lib/emailService';
 
 const router = Router();
 
@@ -13,10 +14,9 @@ router.get('/profile', requireAuth, requireRole(['CUSTOMER']), async (req: Authe
       .from('users')
       .select(`
         id, first_name, last_name, email, phone, avatar, created_at,
-        addresses (*),
-        bookings (count),
-        payments (count)
+        addresses (*)
       `)
+
       .eq('id', req.user!.id)
       .single();
 
@@ -38,16 +38,19 @@ router.get('/profile', requireAuth, requireRole(['CUSTOMER']), async (req: Authe
         userId: a.user_id
       })) || [],
       _count: {
-        bookings: user.bookings?.[0]?.count || 0,
-        payments: user.payments?.[0]?.count || 0
+        bookings: 0,
+        payments: 0
       }
+
     };
 
     res.json({ success: true, data: transformedUser });
-  } catch (error) {
-    res.status(500).json({ success: false, message: 'Failed to fetch profile' });
+  } catch (error: any) {
+    console.error('Error fetching profile:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch profile', error: error.message });
   }
 });
+
 
 // Update customer profile
 router.put('/profile', requireAuth, requireRole(['CUSTOMER']), async (req: AuthenticatedRequest, res) => {
@@ -602,8 +605,19 @@ router.get('/bookings', requireAuth, requireRole(['CUSTOMER']), async (req: Auth
     if (bookingsError) throw bookingsError;
     const bookings = bookingsDoc || [];
 
-    // 2. Collect Booking IDs
+    // 2. Collect IDs
     const bookingIds = bookings.map((b: any) => b.id);
+    const assignedBeauticianIds = bookings.map((b: any) => b.assigned_beautician_id).filter((id: string) => id);
+
+    let beauticiansMap: Record<string, any> = {};
+    if (assignedBeauticianIds.length > 0) {
+      const { data: beauticians } = await supabase
+        .from('beauticians')
+        .select('id, name, phone, photo')
+        .in('id', assignedBeauticianIds);
+
+      beauticians?.forEach((b: any) => beauticiansMap[b.id] = b);
+    }
 
     // 3. Fetch Related Services (Manual Join)
     let servicesMap: Record<string, any[]> = {};
@@ -698,16 +712,31 @@ router.get('/bookings', requireAuth, requireRole(['CUSTOMER']), async (req: Auth
         type: 'PRODUCT'
       }));
 
+      // Fix total amount issue (if 0, likely data issue, sum items as fallback)
+      let displayTotal = b.total_amount;
+      if (!displayTotal || displayTotal === 0) {
+        const sTotal = bookingServices.reduce((sum: number, s: any) => sum + (Number(s.service_price) || 0), 0);
+        const pTotal = bookingProducts.reduce((sum: number, p: any) => sum + ((Number(p.product_price) || 0) * (p.quantity || 1)), 0);
+        displayTotal = sTotal + pTotal;
+      }
+
+      // Friendly Status Logic
+      let displayStatus = b.status || 'PENDING';
+      if (displayStatus === 'PENDING' && b.assigned_beautician_id) {
+        displayStatus = 'ASSIGNED';
+      }
+
       return {
         id: b.id,
         customer_id: b.customer_id,
         booking_type: 'AT_HOME',
-        status: b.status || 'PENDING',
+        status: displayStatus,
         payment_status: b.payment_status,
-        total: b.total_amount,
+        total: displayTotal,
         scheduledDate: b.slot ? b.slot.split(' ')[0] : b.created_at,
         scheduledTime: b.slot ? b.slot.split(' ')[1] : '10:00 AM',
         address: b.address,
+        beautician: b.assigned_beautician_id ? beauticiansMap[b.assigned_beautician_id] : null,
         created_at: b.created_at,
         items: [...serviceItems, ...productItems],
         payments: [{
@@ -734,7 +763,108 @@ router.get('/bookings', requireAuth, requireRole(['CUSTOMER']), async (req: Auth
   }
 });
 
-// Get booking details
+// Get At-Home Booking Details
+router.get('/athome-bookings/:id', requireAuth, requireRole(['CUSTOMER']), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { id } = req.params;
+    const customerId = req.user!.id;
+
+    const { data: booking, error } = await supabase
+      .from('athome_bookings')
+      .select(`
+                *,
+                beautician:beauticians!athome_bookings_assigned_beautician_id_fkey(*),
+                services:athome_booking_services!fk_abs_booking(
+                    *,
+                    master:admin_services!fk_abs_service(name, duration_minutes, price)
+                ),
+                products:athome_booking_products!fk_abp_booking(
+                    *,
+                    master:admin_products!fk_abp_product(name, price, image_url)
+                )
+            `)
+      .eq('id', id)
+      .eq('customer_id', customerId)
+      .single();
+
+    if (error || !booking) {
+      console.error("Error fetching at-home details:", error)
+      return res.status(404).json({ success: false, message: 'Booking not found' });
+    }
+
+    // Manual Fetch Live Updates (workaround for earlier issue)
+    const { data: updates } = await supabase
+      .from('booking_live_updates')
+      .select('*')
+      .eq('booking_id', id)
+      .order('created_at', { ascending: true });
+
+    const responseData = {
+      ...booking,
+      live_updates: updates || []
+    };
+
+    res.json({ success: true, data: responseData });
+
+  } catch (error: any) {
+    console.error('Error fetching at-home booking details:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch details' });
+  }
+});
+
+// NEW ENDPOINT: Customer marks service as completed
+router.post('/athome-bookings/:id/complete', requireAuth, requireRole(['CUSTOMER']), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { id } = req.params;
+    const customerId = req.user!.id;
+
+    // Verify booking belongs to customer and is not already completed
+    const { data: booking, error: fetchError } = await supabase
+      .from('athome_bookings')
+      .select('*')
+      .eq('id', id)
+      .eq('customer_id', customerId)
+      .single();
+
+    if (fetchError || !booking) {
+      return res.status(404).json({ success: false, message: 'Booking not found' });
+    }
+
+    if (booking.status === 'COMPLETED') {
+      return res.status(400).json({ success: false, message: 'Booking already completed' });
+    }
+
+    // Update status
+    const { error: updateError } = await supabase
+      .from('athome_bookings')
+      .update({ status: 'COMPLETED' })
+      .eq('id', id);
+
+    if (updateError) throw updateError;
+
+    // Add Live Update
+    await supabase.from('booking_live_updates').insert({
+      booking_id: id,
+      status: 'COMPLETED',
+      message: 'Customer marked service as completed',
+      updated_by: customerId
+    });
+
+    // Update Payout Status if exists
+    await supabase
+      .from('beautician_payouts')
+      .update({ status: 'PENDING' }) // Ready for admin review
+      .eq('booking_id', id);
+
+    res.json({ success: true, message: 'Service completed successfully' });
+
+  } catch (error: any) {
+    console.error('Error completing booking:', error);
+    res.status(500).json({ success: false, message: 'Failed to complete booking' });
+  }
+});
+
+// Get booking details (Legacy/Salon)
 router.get('/bookings/:id', requireAuth, requireRole(['CUSTOMER']), async (req: AuthenticatedRequest, res) => {
   try {
     const { id } = req.params;
@@ -1084,28 +1214,109 @@ router.post('/athome/book', requireAuth, requireRole(['CUSTOMER']), async (req: 
 
       if (paymentError) throw paymentError;
 
-      // Commit Mechanism
+      // 5. Create Live Update
+      await supabase
+        .from('booking_live_updates')
+        .insert({
+          booking_id: booking.id,
+          status: 'PAYMENT_SUCCESSFUL',
+          message: 'Payment verified and booking confirmed',
+          updated_by: customerId,
+          customer_visible: true
+        });
+
+      // --- SEND EMAIL NOTIFICATION ---
+      const { data: user } = await supabase.from('users').select('email, first_name').eq('id', customerId).single();
+
+      if (user && user.email) {
+        const itemNames = [
+          ...services.map((s: any) => s.name || 'Service'),
+          ...(products || []).map((p: any) => p.name || 'Product')
+        ].filter(Boolean);
+
+        const slotDate = new Date(slot).toLocaleDateString();
+        const slotTime = new Date(slot).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+        // Non-blocking email
+        sendBookingConfirmationEmail({
+          email: user.email,
+          customerName: user.first_name,
+          bookingType: 'At-Home Service',
+          items: itemNames,
+          total: totalAmount,
+          slotDate,
+          slotTime,
+          bookingLink: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/customer/bookings`
+        }).catch(err => console.error('Failed to send confirmation email:', err));
+      }
+
       await supabase.rpc('commit');
 
       res.status(201).json({
         success: true,
-        message: 'Booking created successfully',
-        bookingId
+        data: { bookingId: booking.id }
       });
 
-    } catch (txnError) {
-      console.error('Processing error, rolling back:', txnError);
+    } catch (err: any) {
+      console.error('Processing error, rolling back:', err);
       await supabase.rpc('rollback');
-      throw txnError;
+      throw err;
     }
 
   } catch (error: any) {
-    console.error('Error creating at-home booking:', error);
+    console.error('SERVER ERROR (Create At-Home Booking):', error);
     res.status(500).json({
       success: false,
       message: 'Failed to create booking',
       error: error.message || 'Unknown error'
     });
+  }
+});
+
+// Get At-Home booking details
+router.get('/athome-bookings/:id', requireAuth, requireRole(['CUSTOMER']), async (req: AuthenticatedRequest, res) => {
+  try {
+    const { id } = req.params;
+    const customerId = req.user!.id;
+
+    const { data: booking, error } = await supabase
+      .from('athome_bookings')
+      .select(`
+                *,
+                beautician:beauticians!athome_bookings_assigned_beautician_id_fkey(*),
+                services:athome_booking_services(
+                    *,
+                    master:admin_services(id, name, duration, price)
+                ),
+                products:athome_booking_products(
+                    *,
+                    master:admin_products(id, name, price, image_url)
+                ),
+                live_updates:booking_live_updates(
+                    id, status, message, created_at, updated_by
+                )
+            `)
+      .eq('id', id)
+      .eq('customer_id', customerId)
+      .single();
+
+    if (error || !booking) {
+      return res.status(404).json({ success: false, message: 'Booking not found' });
+    }
+
+    // Sort live updates
+    if (booking.live_updates) {
+      booking.live_updates.sort((a: any, b: any) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    }
+
+    res.json({
+      success: true,
+      data: booking
+    });
+
+  } catch (error: any) {
+    console.error('Error fetching at-home booking details:', error);
+    res.status(500).json({ success: false, message: 'Failed to fetch booking details' });
   }
 });
 

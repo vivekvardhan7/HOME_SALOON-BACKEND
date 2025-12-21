@@ -2,6 +2,7 @@ import 'dotenv/config'; // Load environment variables first, ensuring it runs be
 // Restart trigger
 require('../config.js');
 
+// Backend Entry Point
 import express from 'express';
 import cors from 'cors';
 import bcrypt from 'bcryptjs';
@@ -80,6 +81,7 @@ import vendorApiRoutes from './routes/vendor';
 import authRoutes from './routes/auth';
 import managerRoutes from './routes/manager';
 import managerBookingsRoutes from './routes/manager-bookings';
+import invoiceRoutes from './routes/invoicing';
 import managerAthomeBookingsRoutes from './routes/manager-athome-bookings'; // Added
 import managerHealthRoutes from './routes/manager-health';
 import vendorBookingsRoutes from './routes/vendor-bookings';
@@ -88,6 +90,7 @@ import vendorServicesRoutes from './routes/vendor-services';
 import adminRoutes from './routes/admin';
 import adminBeauticianRoutes from './routes/admin-beauticians'; // Added
 import customerRoutes from './routes/customer';
+import adminAtHomeBookingsRoutes from './routes/admin-athome-bookings';
 import catalogRoutes from './routes/catalog';
 import vendorEmployeesRoutes from "./routes/vendor-employees";
 import atSalonBookingRoutes from './routes/at_salon_booking'; // IMPORT NEW ROUTE
@@ -111,8 +114,10 @@ app.use('/api/manager/athome-bookings', managerAthomeBookingsRoutes); // Added
 app.use('/api/manager', managerHealthRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin/beauticians', adminBeauticianRoutes); // Added new route for Phase 3
+app.use('/api/admin/athome-bookings', adminAtHomeBookingsRoutes); // Added new route for At-Home Full View
 app.use('/api/customer', customerRoutes);
 app.use('/api/catalog', catalogRoutes);
+app.use('/api/invoices', invoiceRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

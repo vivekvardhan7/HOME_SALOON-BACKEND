@@ -2,6 +2,7 @@
 import { Router } from 'express';
 import { supabase } from '../lib/supabase';
 import { requireAuth, requireRole, AuthenticatedRequest, authenticateManager } from '../middleware/auth';
+import { sendBeauticianAssignmentEmail, sendCustomerBeauticianAssignedEmail } from '../lib/emailService';
 
 const router = Router();
 
@@ -16,7 +17,8 @@ router.get('/', authenticateManager, async (req: AuthenticatedRequest, res) => {
             .from('athome_bookings')
             .select(`
         *,
-        customer:users!athome_bookings_customer_id_fkey (first_name, last_name, phone, email)
+        customer:users!athome_bookings_customer_id_fkey (first_name, last_name, phone, email),
+        assigned_beautician:beauticians!athome_bookings_assigned_beautician_id_fkey (*)
       `)
             .order('created_at', { ascending: false });
 
@@ -118,12 +120,25 @@ router.get('/:id/eligible-beauticians', authenticateManager, async (req: Authent
         // 4. Client-Side filtering for "ILIKE" style skill matching
         // Database allows simple ILIKE, but multiple keywords are easier to handle in JS for this scale
         let eligible = (beauticians || []).map((b: any) => {
-            const bSkills = (b.skills || '').toLowerCase();
+            // b.skills is likely an array if coming from text[] column, but robust check is good
+            let bSkills: string[] = [];
+            if (Array.isArray(b.skills)) {
+                bSkills = b.skills.map((s: any) => String(s).toLowerCase());
+            } else if (typeof b.skills === 'string') {
+                bSkills = b.skills.toLowerCase().split(',').map((s: string) => s.trim());
+            }
+
             // Score the beautician: how many keywords match?
             let score = 0;
             let matchedSkills: string[] = [];
-            requiredKeywords.forEach(k => {
-                if (bSkills.includes(k)) {
+
+            // Check if any required keyword matches any of the beautician's skills (partial match allowed)
+            requiredKeywords.forEach((k: string) => {
+                const kLower = k.toLowerCase();
+                // Check if keyword is found in ANY of the beautician's skills
+                const matchFound = bSkills.some((skill: string) => skill.includes(kLower) || kLower.includes(skill));
+
+                if (matchFound) {
                     score++;
                     matchedSkills.push(k);
                 }
@@ -192,46 +207,125 @@ router.post('/:id/assign', authenticateManager, async (req: AuthenticatedRequest
             .from('athome_bookings')
             .update({
                 assigned_beautician_id: beautician_id,
-                status: 'ASSIGNED' // Direct assignment
+                status: 'ASSIGNED'
             })
             .eq('id', id);
 
         if (bError) throw bError;
 
         // 2. Update Booking Services
-        const { error: sError } = await supabase
+        await supabase
             .from('athome_booking_services')
-            .update({
-                assigned_beautician_id: beautician_id,
-                status: 'ASSIGNED'
-            })
+            .update({ assigned_beautician_id: beautician_id, status: 'ASSIGNED' })
             .eq('booking_id', id);
 
-        if (sError) throw sError;
-
-        // 3. Update Booking Products
-        // Note: Check if column exists, we already added it in the SQL script phase
-        const { error: pError } = await supabase
+        // 3. Update Booking Products (if exist)
+        await supabase
             .from('athome_booking_products')
-            .update({
-                assigned_beautician_id: beautician_id,
-                status: 'ASSIGNED'
-            })
+            .update({ assigned_beautician_id: beautician_id, status: 'ASSIGNED' })
             .eq('booking_id', id);
 
-        if (pError) throw pError;
-
-        // 4. Create Initial Live Update (Optional but good)
+        // 4. Create Live Update
         await supabase
             .from('booking_live_updates')
             .insert([{
                 booking_id: id,
                 beautician_id: beautician_id,
-                status: 'ASSIGNED',
+                status: 'Beautician Assigned',
+                message: 'Beautician has been assigned',
+                updated_by: 'manager',
                 customer_visible: true
             }]);
 
-        res.json({ success: true, message: 'Beautician assigned successfully.' });
+        // --------------- FETCH DETAILS FOR EMAILS ---------------
+
+        // Fetch Booking & Customer
+        const { data: booking } = await supabase
+            .from('athome_bookings')
+            .select(`
+                *,
+                customer:users!athome_bookings_customer_id_fkey (first_name, last_name, email, phone)
+            `)
+            .eq('id', id)
+            .single();
+
+        // Fetch Beautician
+        const { data: beautician } = await supabase
+            .from('beauticians')
+            .select('*')
+            .eq('id', beautician_id)
+            .single();
+
+        // Fetch Services
+        const { data: services } = await supabase
+            .from('athome_booking_services')
+            .select('*, master:admin_services!athome_booking_services_admin_service_id_fkey(name)')
+            .eq('booking_id', id);
+
+        // Fetch Products
+        const { data: products } = await supabase
+            .from('athome_booking_products')
+            .select('*, master:admin_products!athome_booking_products_admin_product_id_fkey(name)')
+            .eq('booking_id', id);
+
+        if (booking && beautician) {
+            const customerName = `${booking.customer?.first_name} ${booking.customer?.last_name}`;
+            const beauticianName = beautician.name;
+            const slotDate = new Date(booking.slot).toLocaleDateString();
+            const slotTime = new Date(booking.slot).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+            // 5. Send Email to Beautician
+            const serviceNames = (services || []).map((s: any) => s.master?.name || 'Service');
+            const productNames = (products || []).map((p: any) => p.master?.name || 'Product');
+
+            let addressStr = 'N/A';
+            if (typeof booking.address === 'string') addressStr = booking.address;
+            else if (booking.address) addressStr = `${booking.address.street || ''}, ${booking.address.city || ''}`;
+
+            console.log('[Manager] Sending Email to Beautician:', beautician.email);
+            // Non-blocking email
+            sendBeauticianAssignmentEmail({
+                email: beautician.email,
+                beauticianName,
+                customerName,
+                customerAddress: addressStr,
+                services: serviceNames,
+                products: productNames,
+                slotDate,
+                slotTime
+            }).catch(e => console.error('Failed to send beautician email:', e));
+
+            // 6. Send Email to Customer
+            console.log('[Manager] Sending Email to Customer:', booking.customer?.email);
+            if (booking.customer?.email) {
+                // Non-blocking email
+                sendCustomerBeauticianAssignedEmail({
+                    email: booking.customer.email,
+                    customerName,
+                    beauticianName,
+                    beauticianPhone: beautician.phone,
+                    slotDate,
+                    slotTime,
+                    customerAddress: addressStr,
+                    services: serviceNames,
+                    products: productNames,
+                    trackingLink: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/customer/bookings`
+                }).catch(e => console.error('Failed to send customer email:', e));
+            }
+
+            // 7. Insert Notification for Beautician
+            await supabase
+                .from('beautician_notifications')
+                .insert([{
+                    beautician_id: beautician_id,
+                    booking_id: id,
+                    title: 'New Service Assigned',
+                    message: `You have been assigned to serve ${customerName} on ${slotDate} at ${slotTime}.`,
+                    is_read: false
+                }]);
+        }
+
+        res.json({ success: true, message: 'Beautician assigned and notifications sent.' });
 
     } catch (error: any) {
         console.error('Error assigning beautician:', error);

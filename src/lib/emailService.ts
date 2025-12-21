@@ -33,7 +33,7 @@ interface EmailOptions {
 export async function sendEmail(options: EmailOptions): Promise<boolean> {
   try {
     const info = await transporter.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER || 'noreply@homebonzenga.com',
+      from: process.env.SMTP_FROM || process.env.SMTP_USER || 'bookings@homebonzenga.com',
       to: options.to,
       subject: options.subject,
       html: options.html,
@@ -449,3 +449,166 @@ export async function sendVendorRejectionNotification(vendorData: {
   });
 }
 
+
+/**
+ * Send assignment notification to Beautician
+ */
+export async function sendBeauticianAssignmentEmail(data: {
+  email: string;
+  beauticianName: string;
+  customerName: string;
+  customerAddress: string;
+  services: string[];
+  products: string[];
+  slotDate: string;
+  slotTime: string;
+}): Promise<boolean> {
+  const html = renderEmailLayout({
+    heading: 'New Service Assignment',
+    headerColor: '#7c3aed',
+    bodyHtml: `
+      <p>Hi ${data.beauticianName},</p>
+      <p>You have been assigned a new at-home service request.</p>
+      
+      <div style="background: #f9f9f9; padding: 15px; border-radius: 8px; margin: 15px 0;">
+        <h3 style="margin-top:0;">Request Details</h3>
+        <p><strong>Date:</strong> ${data.slotDate} at ${data.slotTime}</p>
+        <p><strong>Customer:</strong> ${data.customerName}</p>
+        <p><strong>Address:</strong> ${data.customerAddress}</p>
+      </div>
+
+      <div style="margin: 15px 0;">
+        <strong>Services to Provide:</strong>
+        <ul>
+          ${data.services.map(s => `<li>${s}</li>`).join('')}
+        </ul>
+      </div>
+
+      ${data.products.length > 0 ? `
+      <div style="margin: 15px 0;">
+        <strong>Products to Carry:</strong>
+        <ul>
+          ${data.products.map(p => `<li>${p}</li>`).join('')}
+        </ul>
+      </div>` : ''}
+
+      <p>Please ensure you arrive on time and update your status in the app.</p>
+    `,
+    footerText: 'Home Bonzenga Team'
+  });
+
+  return await sendEmail({
+    to: data.email,
+    subject: 'New At-Home Service Assigned',
+    html,
+  });
+}
+
+/**
+ * Send assignment notification to Customer
+ */
+export async function sendCustomerBeauticianAssignedEmail(data: {
+  email: string;
+  customerName: string;
+  beauticianName: string;
+  beauticianPhone: string;
+  slotDate: string;
+  slotTime: string;
+  customerAddress: string;
+  services: string[];
+  products: string[];
+  trackingLink?: string;
+}): Promise<boolean> {
+  const html = renderEmailLayout({
+    heading: 'Beautician Assigned!',
+    headerColor: '#10b981',
+    bodyHtml: `
+      <p>Hi ${data.customerName},</p>
+      <p>Great news! <strong>${data.beauticianName}</strong> has been assigned to your booking.</p>
+      
+      <div style="background: #f9f9f9; padding: 15px; border-radius: 8px; margin: 15px 0;">
+        <p><strong>Beautician:</strong> ${data.beauticianName}</p>
+        <p><strong>Phone:</strong> ${data.beauticianPhone}</p>
+        <p><strong>Scheduled For:</strong> ${data.slotDate} at ${data.slotTime}</p>
+        <p><strong>Location:</strong> ${data.customerAddress}</p>
+      </div>
+
+      <div style="margin: 15px 0;">
+        <strong>Service Details:</strong>
+        <ul>
+          ${data.services.map(s => `<li>${s}</li>`).join('')}
+        </ul>
+      </div>
+
+      ${data.products.length > 0 ? `
+      <div style="margin: 15px 0;">
+        <strong>Products Included:</strong>
+        <ul>
+          ${data.products.map(p => `<li>${p}</li>`).join('')}
+        </ul>
+      </div>` : ''}
+
+      <p>Your beautician will arrive at your location at the scheduled time.</p>
+      
+      ${data.trackingLink ? `
+      <p style="text-align: center;">
+        <a href="${data.trackingLink}" class="button">Track Status</a>
+      </p>
+      ` : ''}
+    `,
+    footerText: 'Home Bonzenga Team'
+  });
+
+  return await sendEmail({
+    to: data.email,
+    subject: 'Beautician Assigned - Home Bonzenga',
+    html,
+  });
+}
+/**
+ * Send booking confirmation to Customer
+ */
+export async function sendBookingConfirmationEmail(data: {
+  email: string;
+  customerName: string;
+  bookingType: string;
+  items: string[];
+  total: number;
+  slotDate: string;
+  slotTime: string;
+  bookingLink?: string;
+}): Promise<boolean> {
+  const html = renderEmailLayout({
+    heading: 'Booking Confirmed!',
+    headerColor: '#7c3aed',
+    bodyHtml: `
+      <p>Hi ${data.customerName},</p>
+      <p>Your <strong>${data.bookingType}</strong> booking has been successfully placed.</p>
+      
+      <div style="background: #f9f9f9; padding: 15px; border-radius: 8px; margin: 15px 0;">
+        <h3 style="margin-top:0;">Booking Details</h3>
+        <p><strong>Date:</strong> ${data.slotDate} at ${data.slotTime}</p>
+        <p><strong>Items:</strong></p>
+        <ul>
+          ${data.items.map(s => `<li>${s}</li>`).join('')}
+        </ul>
+        <p><strong>Total Amount:</strong> ${data.total.toLocaleString()} CDF</p>
+      </div>
+
+      <p>We will notify you once a beautician/vendor accepts your request.</p>
+      
+      ${data.bookingLink ? `
+      <p style="text-align: center;">
+        <a href="${data.bookingLink}" class="button">View Booking</a>
+      </p>
+      ` : ''}
+    `,
+    footerText: 'Home Bonzenga Team'
+  });
+
+  return await sendEmail({
+    to: data.email,
+    subject: 'Booking Confirmation - Home Bonzenga',
+    html,
+  });
+}

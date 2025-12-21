@@ -1,6 +1,8 @@
 import { Router } from 'express';
 import { supabase, supabaseAnon } from '../lib/supabase';
 import { AuthenticatedRequest } from '../middleware/auth';
+import { sendBookingConfirmationEmail } from '../lib/emailService';
+
 
 const router = Router();
 
@@ -582,6 +584,38 @@ router.post('/', async (req, res) => {
         .eq('id', bookingRecord.id)
         .single();
 
+      // --- SEND EMAIL NOTIFICATION ---
+      const { data: customerUser } = await supabase.from('users').select('email, firstName').eq('id', customerId).single();
+
+      if (customerUser && customerUser.email) {
+        const itemNames = [
+          ...bookingItemsData.map(i => i.name || 'Service'),
+          ...bookingProductsData.map(p => `Product ID: ${p.productCatalogId}`) // Might not have names easily here, use ID or fetch names if critical. 
+          // Ideally we should have names in bookingProductsData or fetch them. 
+          // Looking at code: bookingProductsData only has IDs. 
+          // But let's check if we can get names from completeBooking if available.
+        ];
+
+        // If completeBooking is available, use it to get better names
+        let emailItems = itemNames;
+        if (completeBooking && completeBooking.items) {
+          emailItems = completeBooking.items.map((i: any) => i.name || i.service?.name || i.catalogService?.name || 'Service');
+        }
+
+        const slotDateDisplay = bookingDate.toLocaleDateString();
+
+        sendBookingConfirmationEmail({
+          email: customerUser.email,
+          customerName: customerUser.firstName,
+          bookingType: resolvedBookingType === 'SALON' || resolvedBookingType === 'SALON_VISIT' ? 'Salon Visit' : 'Service',
+          items: emailItems,
+          total: total,
+          slotDate: slotDateDisplay,
+          slotTime: timeString,
+          bookingLink: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/customer/bookings`
+        }).catch(err => console.error('Failed to send salon booking email:', err));
+      }
+
       if (fetchError) {
         console.error('Error fetching complete booking:', fetchError);
         // Return the basic record if fetch fails
@@ -595,6 +629,7 @@ router.post('/', async (req, res) => {
         message: 'Booking created successfully',
         booking: completeBooking,
       });
+
 
     } catch (err: any) {
       throw err;
