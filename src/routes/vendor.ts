@@ -728,4 +728,121 @@ router.get('/:vendorId/revenue', authenticate, async (req, res) => {
   }
 });
 
+
+// Get specific appointment details
+router.get('/:vendorId/appointments/:appointmentId', authenticate, async (req, res) => {
+  try {
+    const { vendorId: userId, appointmentId } = req.params;
+
+    // Find the vendor record for this user
+    const { data: vendor, error: vendorError } = await supabase
+      .from('vendor')
+      .select('id')
+      .eq('user_id', userId)
+      .single();
+
+    if (vendorError || !vendor) {
+      return res.status(404).json({
+        success: false,
+        message: 'Vendor not found'
+      });
+    }
+
+    const { data: appointment, error: appointmentError } = await supabase
+      .from('vendor_orders')
+      .select('*')
+      .eq('id', appointmentId)
+      .eq('vendor_id', vendor.id)
+      .single();
+
+    if (appointmentError || !appointment) {
+      return res.status(404).json({
+        success: false,
+        message: 'Appointment not found'
+      });
+    }
+
+    // Security check: only the owner can view
+    // (Already handled by .eq('vendor_id', vendor.id) in query)
+
+    res.json({
+      success: true,
+      data: appointment
+    });
+  } catch (error: any) {
+    console.error('❌ Get Appointment Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
+// Start an appointment
+router.patch('/:vendorId/appointments/:appointmentId/start', authenticate, async (req, res) => {
+  try {
+    const { vendorId: userId, appointmentId } = req.params;
+
+    // Find the vendor record for this user
+    const { data: vendor, error: vendorError } = await supabase
+      .from('vendor')
+      .select('id')
+      .eq('user_id', userId)
+      .single();
+
+    if (vendorError || !vendor) {
+      return res.status(404).json({
+        success: false,
+        message: 'Vendor not found'
+      });
+    }
+
+    // Verify ownership and current status
+    const { data: appointment, error: fetchError } = await supabase
+      .from('vendor_orders')
+      .select('id, booking_status')
+      .eq('id', appointmentId)
+      .eq('vendor_id', vendor.id)
+      .single();
+
+    if (fetchError || !appointment) {
+      return res.status(404).json({
+        success: false,
+        message: 'Appointment not found'
+      });
+    }
+
+    if (appointment.booking_status !== 'CONFIRMED') {
+      return res.status(400).json({
+        success: false,
+        message: 'Only CONFIRMED appointments can be started'
+      });
+    }
+
+    // Update status to STARTED
+    const { data: updatedAppointment, error: updateError } = await supabase
+      .from('vendor_orders')
+      .update({ booking_status: 'STARTED' })
+      .eq('id', appointmentId)
+      .select()
+      .single();
+
+    if (updateError) throw updateError;
+
+    res.json({
+      success: true,
+      message: 'Appointment started successfully',
+      data: updatedAppointment
+    });
+  } catch (error: any) {
+    console.error('❌ Start Appointment Error:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error',
+      error: error.message
+    });
+  }
+});
+
 export default router;

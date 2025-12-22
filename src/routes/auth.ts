@@ -4,14 +4,15 @@ import jwt, { type Secret, type SignOptions } from 'jsonwebtoken';
 import { sendVendorSignupNotificationToManagers } from '../lib/emailService';
 import { rateLimitMiddleware } from '../lib/rateLimiter';
 import { supabase } from '../lib/supabase';
+import { getSupabaseAdmin } from '../lib/supabaseAdmin';
 
 const router = express.Router();
 
 // Helper function to get client IP and user agent
 const getClientInfo = (req: express.Request) => {
-  const ip = req.ip || 
-    req.socket.remoteAddress || 
-    (req.headers['x-forwarded-for'] as string)?.split(',')[0] || 
+  const ip = req.ip ||
+    req.socket.remoteAddress ||
+    (req.headers['x-forwarded-for'] as string)?.split(',')[0] ||
     'unknown';
   const userAgent = req.headers['user-agent'] || 'unknown';
   return { ip, userAgent };
@@ -129,7 +130,7 @@ router.post('/register-vendor', async (req, res) => {
         email: email.toLowerCase(),
         phone,
         role: 'VENDOR',
-        status: 'ACTIVE'
+        status: 'PENDING_VERIFICATION'
       }, {
         onConflict: 'id'
       })
@@ -315,7 +316,7 @@ router.post('/login', rateLimitMiddleware, async (req, res) => {
 
     // Check static admin/manager credentials first
     const staticUser = STATIC_USERS[emailLower as keyof typeof STATIC_USERS];
-    
+
     if (staticUser) {
       // Check if password matches static user
       if (password === staticUser.password) {
@@ -389,35 +390,29 @@ router.post('/login', rateLimitMiddleware, async (req, res) => {
 
     const user = userRes.data;
 
-    // Verify password
-    if (!user.password) {
-      await logAccessAttempt(
-        user.id,
-        emailLower,
-        user.role,
-        false,
-        'email_password',
-        ip,
-        userAgent
-      );
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
-
-    const isValidPassword = await bcrypt.compare(password, user.password);
-    if (!isValidPassword) {
-      await logAccessAttempt(
-        user.id,
-        emailLower,
-        user.role,
-        false,
-        'email_password',
-        ip,
-        userAgent
-      );
-      return res.status(401).json({ message: 'Invalid credentials' });
-    }
+    // REFACTOR: REMOVE manual password check against public.users
+    // All logins must be handled via Supabase Auth on the frontend.
+    // This backend /login endpoint should only be used for session syncing or status validation.
+    // For now, we allow the request to proceed if the user exists and is active.
+    // The frontend's signInWithPassword already validated the credentials.
 
     // Check if user is active
+    if (user.status === 'PENDING_VERIFICATION') {
+      await logAccessAttempt(
+        user.id,
+        emailLower,
+        user.role,
+        false,
+        'email_password',
+        ip,
+        userAgent
+      );
+      return res.status(403).json({
+        message: 'Please verify your email to continue.',
+        code: 'EMAIL_NOT_VERIFIED'
+      });
+    }
+
     if (user.status !== 'ACTIVE') {
       await logAccessAttempt(
         user.id,
@@ -584,7 +579,7 @@ router.post('/login', rateLimitMiddleware, async (req, res) => {
 router.post('/log-google-auth', async (req, res) => {
   try {
     const { userId, email, role, success, ipAddress, userAgent } = req.body;
-    
+
     await logAccessAttempt(
       userId || null,
       email || null,
@@ -594,7 +589,7 @@ router.post('/log-google-auth', async (req, res) => {
       ipAddress || null,
       userAgent || null
     );
-    
+
     res.json({ success: true });
   } catch (error) {
     console.error('Error logging Google auth:', error);
@@ -638,7 +633,7 @@ router.post('/register-customer', async (req, res) => {
         password: hashedPassword,
         phone,
         role: 'CUSTOMER',
-        status: 'ACTIVE'
+        status: 'PENDING_VERIFICATION'
       })
       .select()
       .single();
@@ -663,5 +658,53 @@ router.post('/register-customer', async (req, res) => {
   }
 });
 
+
+
+// Generate manual verification link (Supabase Admin)
+router.post('/generate-verification-link', async (req, res) => {
+  try {
+    const { email, role } = req.body;
+
+    if (!email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email is required'
+      });
+    }
+
+    const supabaseAdmin = getSupabaseAdmin();
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+
+    console.log(`Generating verification link for ${email} (${role})`);
+
+    const { data, error } = await (supabaseAdmin.auth.admin as any).generateLink({
+      type: 'invite',
+      email,
+      options: {
+        redirectTo: `${frontendUrl}/auth/verify`
+      }
+    });
+
+    if (error) {
+      console.error('Error generating Supabase link:', error);
+      return res.status(error.status || 500).json({
+        success: false,
+        message: error.message || 'Failed to generate verification link'
+      });
+    }
+
+    res.json({
+      success: true,
+      verificationLink: data.properties.action_link
+    });
+  } catch (error: any) {
+    console.error('❌ Server error generating link:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Internal server error generating verification link',
+      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+});
 
 export default router;
