@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { supabase } from '../lib/supabase';
 import { requireAuth, requireRole, AuthenticatedRequest, authenticateManager } from '../middleware/auth';
-import { sendBookingConfirmationEmail } from '../lib/emailService';
+
 
 const router = Router();
 
@@ -818,45 +818,37 @@ router.post('/athome-bookings/:id/complete', requireAuth, requireRole(['CUSTOMER
     const { id } = req.params;
     const customerId = req.user!.id;
 
-    // Verify booking belongs to customer and is not already completed
-    const { data: booking, error: fetchError } = await supabase
-      .from('athome_bookings')
-      .select('*')
-      .eq('id', id)
-      .eq('customer_id', customerId)
-      .single();
+    console.log('🏁 Completing At-Home Booking:', id);
 
-    if (fetchError || !booking) {
-      return res.status(404).json({ success: false, message: 'Booking not found' });
-    }
-
-    if (booking.status === 'COMPLETED') {
-      return res.status(400).json({ success: false, message: 'Booking already completed' });
-    }
-
-    // Update status
-    const { error: updateError } = await supabase
-      .from('athome_bookings')
-      .update({ status: 'COMPLETED' })
-      .eq('id', id);
-
-    if (updateError) throw updateError;
-
-    // Add Live Update
-    await supabase.from('booking_live_updates').insert({
-      booking_id: id,
-      status: 'COMPLETED',
-      message: 'Customer marked service as completed',
-      updated_by: customerId
+    // Call Atomic RPC Transaction
+    const { data: rpcResult, error: rpcError } = await supabase.rpc('complete_at_home_service_transaction', {
+      p_booking_id: id,
+      p_customer_id: customerId
     });
 
-    // Update Payout Status if exists
-    await supabase
-      .from('beautician_payouts')
-      .update({ status: 'PENDING' }) // Ready for admin review
-      .eq('booking_id', id);
+    if (rpcError) {
+      console.error('RPC Error details:', rpcError);
+      throw new Error(rpcError.message);
+    }
+
+    const result = rpcResult as { success: boolean; message?: string };
+
+    if (!result.success) {
+      return res.status(400).json({ success: false, message: result.message || 'Failed to complete service' });
+    }
 
     res.json({ success: true, message: 'Service completed successfully' });
+    return;
+
+
+
+
+
+
+
+
+
+
 
   } catch (error: any) {
     console.error('Error completing booking:', error);
@@ -1238,6 +1230,7 @@ router.post('/athome/book', requireAuth, requireRole(['CUSTOMER']), async (req: 
         const slotTime = new Date(slot).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
         // Non-blocking email
+        /*
         sendBookingConfirmationEmail({
           email: user.email,
           customerName: user.first_name,
@@ -1247,7 +1240,8 @@ router.post('/athome/book', requireAuth, requireRole(['CUSTOMER']), async (req: 
           slotDate,
           slotTime,
           bookingLink: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/customer/bookings`
-        }).catch(err => console.error('Failed to send confirmation email:', err));
+        }).catch((err: any) => console.error('Failed to send confirmation email:', err));
+        */
       }
 
       await supabase.rpc('commit');

@@ -160,13 +160,7 @@ router.get('/verify', async (req, res) => {
     });
 
     if (updatedVendor.status === 'PENDING_APPROVAL') {
-      sendVendorSignupNotificationToManagers({
-        shopName: updatedVendor.shopname,
-        ownerName: vendor.user ? `${vendor.user.first_name} ${vendor.user.last_name}`.trim() : 'Vendor',
-        email: vendor.user?.email || '',
-        phone: vendor.user?.phone || '',
-        address: `${updatedVendor.address || ''}, ${updatedVendor.city || ''}`,
-      }).catch((err: any) => {
+      sendVendorSignupNotificationToManagers().catch((err: any) => {
         console.error('Failed to send manager notification email after verification:', err);
       });
     }

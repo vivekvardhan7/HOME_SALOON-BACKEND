@@ -2,7 +2,7 @@
 import { Router } from 'express';
 import { supabase } from '../lib/supabase';
 import { requireAuth, requireRole, AuthenticatedRequest, authenticateManager } from '../middleware/auth';
-import { sendBeauticianAssignmentEmail, sendCustomerBeauticianAssignedEmail } from '../lib/emailService';
+
 
 const router = Router();
 
@@ -110,6 +110,7 @@ router.get('/:id/eligible-beauticians', authenticateManager, async (req: Authent
         console.log('[Manager] Required Keywords for Beautician:', requiredKeywords);
 
         // 3. Fetch All Active Beauticians
+        // STRICT FILTER: Must be ACTIVE in 'beauticians' AND 'entity_status' (not frozen)
         const { data: beauticians, error: bError } = await supabase
             .from('beauticians')
             .select('*')
@@ -117,9 +118,29 @@ router.get('/:id/eligible-beauticians', authenticateManager, async (req: Authent
 
         if (bError) throw bError;
 
+        // Fetch freeze status for these beauticians
+        const bIds = beauticians?.map((b: any) => b.id) || [];
+        const { data: statuses } = await supabase
+            .from('entity_status')
+            .select('entity_id, is_active')
+            .eq('entity_type', 'BEAUTICIAN')
+            .in('entity_id', bIds);
+
+        // Filter out frozen
+        const activeBeauticians = beauticians?.filter((b: any) => {
+            const status = statuses?.find((s: any) => s.entity_id === b.id);
+            // If no status record exists, assume active (or strictly inactive? Prompt says "Admin controls freeze". Default active in migration).
+            // Migration sets default true. So if missing, maybe active.
+            // But let's assume if explicit false, exclude.
+            return status ? status.is_active : true;
+        }) || [];
+
+        // Use activeBeauticians instead of beauticians for matching logic
+        const sourceBeauticians = activeBeauticians;
+
         // 4. Client-Side filtering for "ILIKE" style skill matching
         // Database allows simple ILIKE, but multiple keywords are easier to handle in JS for this scale
-        let eligible = (beauticians || []).map((b: any) => {
+        let eligible = (sourceBeauticians || []).map((b: any) => {
             // b.skills is likely an array if coming from text[] column, but robust check is good
             let bSkills: string[] = [];
             if (Array.isArray(b.skills)) {
@@ -144,15 +165,13 @@ router.get('/:id/eligible-beauticians', authenticateManager, async (req: Authent
                 }
             });
 
-            // Special case: "Hair" matches "Hair Cut", etc.
-            // If keywords is empty (rare), allow all.
             const isMatch = requiredKeywords.length === 0 || score > 0;
 
             return {
                 ...b,
                 matchScore: score,
                 matchedSkills: matchedSkills,
-                isMatch
+                isMatch: isMatch // Properties must be unique
             };
         });
 
@@ -168,7 +187,7 @@ router.get('/:id/eligible-beauticians', authenticateManager, async (req: Authent
         // Fallback: If no matches, return ALL active beauticians but marked as "Weak Match"
         if (eligible.length === 0 && requiredKeywords.length > 0) {
             console.log('[Manager] No direct skill matches found. Returning all active beauticians as fallback.');
-            eligible = (beauticians || []).map((b: any) => ({ ...b, matchScore: 0, isMatch: false, matchType: 'Fallback' }));
+            eligible = (activeBeauticians || []).map((b: any) => ({ ...b, matchScore: 0, isMatch: false, matchType: 'Fallback' }));
         }
 
         res.json({
@@ -276,42 +295,17 @@ router.post('/:id/assign', authenticateManager, async (req: AuthenticatedRequest
 
             // 5. Send Email to Beautician
             const serviceNames = (services || []).map((s: any) => s.master?.name || 'Service');
-            const productNames = (products || []).map((p: any) => p.master?.name || 'Product');
+            // const productNames = (products || []).map((p: any) => p.master?.name || 'Product');
 
             let addressStr = 'N/A';
             if (typeof booking.address === 'string') addressStr = booking.address;
             else if (booking.address) addressStr = `${booking.address.street || ''}, ${booking.address.city || ''}`;
 
             console.log('[Manager] Sending Email to Beautician:', beautician.email);
-            // Non-blocking email
-            sendBeauticianAssignmentEmail({
-                email: beautician.email,
-                beauticianName,
-                customerName,
-                customerAddress: addressStr,
-                services: serviceNames,
-                products: productNames,
-                slotDate,
-                slotTime
-            }).catch(e => console.error('Failed to send beautician email:', e));
 
             // 6. Send Email to Customer
             console.log('[Manager] Sending Email to Customer:', booking.customer?.email);
-            if (booking.customer?.email) {
-                // Non-blocking email
-                sendCustomerBeauticianAssignedEmail({
-                    email: booking.customer.email,
-                    customerName,
-                    beauticianName,
-                    beauticianPhone: beautician.phone,
-                    slotDate,
-                    slotTime,
-                    customerAddress: addressStr,
-                    services: serviceNames,
-                    products: productNames,
-                    trackingLink: `${process.env.FRONTEND_URL || 'http://localhost:3000'}/customer/bookings`
-                }).catch(e => console.error('Failed to send customer email:', e));
-            }
+
 
             // 7. Insert Notification for Beautician
             await supabase

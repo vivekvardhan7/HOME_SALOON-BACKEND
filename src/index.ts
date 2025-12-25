@@ -95,7 +95,8 @@ import catalogRoutes from './routes/catalog';
 import adminAtSalonServicesRoutes from './routes/adminAtSalonServices';
 import vendorEmployeesRoutes from "./routes/vendor-employees";
 import atSalonBookingRoutes from './routes/at_salon_booking'; // IMPORT NEW ROUTE
-import { verifyEmailTransport } from './lib/emailService';
+
+import adminFinanceRoutes from './routes/admin-finance';
 
 // Use routes
 app.use('/api/dashboard', dashboardRoutes);
@@ -113,6 +114,7 @@ app.use('/api/manager', managerRoutes);
 app.use('/api/manager/bookings', managerBookingsRoutes);
 app.use('/api/manager/athome-bookings', managerAthomeBookingsRoutes); // Added
 app.use('/api/manager', managerHealthRoutes);
+app.use('/api/admin', adminFinanceRoutes); // Added new financial module (MUST BE BEFORE adminRoutes to avoid /vendors/:id conflict)
 app.use('/api/admin', adminRoutes);
 app.use('/api/admin', adminAtSalonServicesRoutes);
 app.use('/api/admin/beauticians', adminBeauticianRoutes); // Added new route for Phase 3

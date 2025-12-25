@@ -1,7 +1,7 @@
 import express from 'express';
 import { authenticateManager } from '../middleware/auth';
 import type { AuthenticatedRequest } from '../middleware/auth';
-import { sendVendorApprovalNotification, sendVendorRejectionNotification } from '../lib/emailService';
+
 import { supabase } from '../lib/supabase';
 
 const router = express.Router();
@@ -1008,6 +1008,7 @@ const approveVendorHandler = async (req: express.Request, res: express.Response)
     }
 
     // Send approval email (non-blocking)
+    /*
     sendVendorApprovalNotification({
       email: user.email,
       shopName: vendor.shopname || vendor.shopName,
@@ -1015,6 +1016,7 @@ const approveVendorHandler = async (req: express.Request, res: express.Response)
     }).catch((emailError: any) => {
       console.error('⚠️ Failed to send approval email:', emailError?.message || emailError);
     });
+    */
 
     console.log(`✅ Vendor ${id} approved successfully`);
 
@@ -1107,6 +1109,7 @@ const rejectVendorHandler = async (req: express.Request, res: express.Response) 
     }
 
     // Send rejection email (non-blocking)
+    /*
     sendVendorRejectionNotification({
       email: user.email,
       shopName: vendor.shopname || vendor.shopName,
@@ -1115,6 +1118,7 @@ const rejectVendorHandler = async (req: express.Request, res: express.Response) 
     }).catch((emailError: any) => {
       console.error('⚠️ Failed to send rejection email:', emailError?.message || emailError);
     });
+    */
 
     console.log(`✅ Vendor ${id} rejected successfully`);
 

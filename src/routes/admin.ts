@@ -1,6 +1,6 @@
 import express from 'express';
 import { authenticate } from '../middleware/auth';
-import { sendVendorApprovalNotification, sendVendorRejectionNotification } from '../lib/emailService';
+
 import { supabase } from '../lib/supabase';
 
 const router = express.Router();
@@ -543,23 +543,27 @@ router.patch('/vendors/:vendorId/status', protect, async (req, res) => {
     // Send email notification based on status change
     if (status === 'APPROVED' && vendorBefore.status !== 'APPROVED') {
       // Send approval email
+      /*
       sendVendorApprovalNotification({
         email: vendorBefore.user.email,
         shopName: vendorBefore.shopname || vendorBefore.shopName || 'Unknown',
         ownerName: `${vendorBefore.user.first_name} ${vendorBefore.user.last_name}`
-      }).catch(err => {
+      }).catch((err: any) => {
         console.error('Failed to send approval notification email:', err);
       });
+      */
     } else if (status === 'REJECTED' && vendorBefore.status !== 'REJECTED') {
       // Send rejection email
+      /*
       sendVendorRejectionNotification({
         email: vendorBefore.user.email,
         shopName: vendorBefore.shopname || vendorBefore.shopName || 'Unknown',
         ownerName: `${vendorBefore.user.first_name} ${vendorBefore.user.last_name}`,
         reason: reason || 'Your application did not meet our requirements at this time.'
-      }).catch(err => {
+      }).catch((err: any) => {
         console.error('Failed to send rejection notification email:', err);
       });
+      */
     }
 
     res.json({

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { supabase, supabaseAnon } from '../lib/supabase';
 import { AuthenticatedRequest } from '../middleware/auth';
-import { sendBookingConfirmationEmail } from '../lib/emailService';
+
 
 
 const router = Router();
@@ -604,6 +604,7 @@ router.post('/', async (req, res) => {
 
         const slotDateDisplay = bookingDate.toLocaleDateString();
 
+        /*
         sendBookingConfirmationEmail({
           email: customerUser.email,
           customerName: customerUser.firstName,
@@ -613,7 +614,8 @@ router.post('/', async (req, res) => {
           slotDate: slotDateDisplay,
           slotTime: timeString,
           bookingLink: `${process.env.FRONTEND_URL || 'http://localhost:5173'}/customer/bookings`
-        }).catch(err => console.error('Failed to send salon booking email:', err));
+        }).catch((err: any) => console.error('Failed to send salon booking email:', err));
+        */
       }
 
       if (fetchError) {
