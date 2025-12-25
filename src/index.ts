@@ -1,5 +1,5 @@
 import 'dotenv/config'; // Load environment variables first, ensuring it runs before other imports
-// Restart trigger
+// Restart trigger (2025-12-25 04:21)
 require('../config.js');
 
 // Backend Entry Point
