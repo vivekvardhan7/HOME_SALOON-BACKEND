@@ -74,6 +74,11 @@ router.put('/:id', async (req: AuthenticatedRequest, res) => {
         const { id } = req.params;
         const updates = req.body;
 
+        // Process skills if present
+        if (updates.skills && typeof updates.skills === 'string') {
+            updates.skills = updates.skills.split(',').map((s: string) => s.trim()).filter((s: string) => s.length > 0);
+        }
+
         const { data, error } = await supabase
             .from('beauticians')
             .update(updates)

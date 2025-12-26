@@ -1,5 +1,6 @@
 import express from 'express';
-import { authenticate } from '../middleware/auth';
+import { authenticate, requireRole } from '../middleware/auth';
+import bcrypt from 'bcryptjs';
 
 import { supabase } from '../lib/supabase';
 
@@ -1470,6 +1471,61 @@ router.post('/athome/products', protect, async (req, res) => {
       message: 'Failed to create product in master catalog',
       error: error.message
     });
+  }
+});
+
+// ==========================================
+// MANAGER SYSTEM ACCESS (Admin Controlled)
+// ==========================================
+
+// Get current manager info (masked)
+router.get('/manager-settings', protect, requireRole(['ADMIN']), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('system_credentials')
+      .select('email, updated_at, is_active')
+      .eq('role', 'MANAGER')
+      .maybeSingle();
+
+    if (error) throw error;
+
+    res.json({
+      success: true,
+      manager: data || null
+    });
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
+  }
+});
+
+// Update/Create/Replace Manager
+router.post('/manager-settings', protect, requireRole(['ADMIN']), async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ message: 'Email and password required' });
+
+    const hashedPassword = await bcrypt.hash(password, 12);
+
+    // Strategy: Delete old manager row and insert new one to invalidate old IDs instantly
+    // This ensures old JWTs (referencing old ID) become invalid immediately.
+
+    // 1. Delete existing
+    await supabase.from('system_credentials').delete().eq('role', 'MANAGER');
+
+    // 2. Insert new
+    const { data, error } = await supabase.from('system_credentials').insert({
+      role: 'MANAGER',
+      email: email.toLowerCase(),
+      password_hash: hashedPassword,
+      is_active: true
+    }).select().single();
+
+    if (error) throw error;
+
+    res.json({ success: true, message: 'Manager updated. Old sessions invalidated.', manager: { email: data.email } });
+
+  } catch (err: any) {
+    res.status(500).json({ success: false, message: err.message });
   }
 });
 

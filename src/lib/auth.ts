@@ -18,6 +18,7 @@ const JWT_REFRESH_EXPIRES_IN = process.env.JWT_REFRESH_EXPIRES_IN || '30d';
 
 export interface JWTPayload {
   userId: string;
+  id?: string;
   email: string;
   role: string;
   type: 'access' | 'refresh';

@@ -231,7 +231,8 @@ router.get('/vendor-status/:supabaseUserId', async (req, res) => {
   }
 });
 
-// Static admin/manager credentials (legacy fallback for local testing)
+// Static admin credentials (legacy fallback for local testing)
+// MANAGER is now handled via system_credentials table
 const STATIC_USERS = {
   'admin@homebonzenga.com': {
     id: 'admin-static-id',
@@ -241,16 +242,7 @@ const STATIC_USERS = {
     role: 'ADMIN',
     status: 'ACTIVE',
     password: 'Admin@123', // Plain text for static comparison
-  },
-  'manager@homebonzenga.com': {
-    id: 'manager-static-id',
-    email: 'manager@homebonzenga.com',
-    firstName: 'System',
-    lastName: 'Manager',
-    role: 'MANAGER',
-    status: 'ACTIVE',
-    password: 'Manager@123', // Plain text for static comparison
-  },
+  }
 };
 
 // Login endpoint with role-based authentication
@@ -276,7 +268,62 @@ router.post('/login', rateLimitMiddleware, async (req, res) => {
 
     const emailLower = email.toLowerCase();
 
-    // Check static admin/manager credentials first
+    // ---------------------------------------------------------
+    // 1. CHECK SYSTEM CREDENTIALS (MANAGER)
+    // ---------------------------------------------------------
+    // Check if this is a Manager login via system_credentials table
+    // This allows Manager to be a strictly system role without a 'users' table entry
+    try {
+      const { data: systemUser, error: sysError } = await supabase
+        .from('system_credentials')
+        .select('*')
+        .eq('role', 'MANAGER')
+        .eq('email', emailLower)
+        .maybeSingle();
+
+      if (systemUser) {
+        if (!systemUser.is_active) {
+          await logAccessAttempt(systemUser.id, emailLower, 'MANAGER', false, 'email_password', ip, userAgent);
+          return res.status(403).json({ message: 'Manager account is inactive' });
+        }
+
+        const isMatch = await bcrypt.compare(password, systemUser.password_hash);
+        if (isMatch) {
+          // Success
+          if (rateLimitInfo?.decrement) rateLimitInfo.decrement();
+
+          const tokens = generateTokens({
+            id: systemUser.id,
+            email: systemUser.email,
+            role: 'MANAGER'
+          });
+
+          await logAccessAttempt(systemUser.id, emailLower, 'MANAGER', true, 'email_password', ip, userAgent);
+
+          return res.json({
+            user: {
+              id: systemUser.id,
+              email: systemUser.email,
+              role: 'MANAGER',
+              firstName: 'System',
+              lastName: 'Manager'
+            },
+            ...tokens,
+            redirectPath: ('/manager')
+          });
+        } else {
+          await logAccessAttempt(systemUser.id, emailLower, 'MANAGER', false, 'email_password', ip, userAgent);
+          return res.status(401).json({ message: 'Invalid credentials' });
+        }
+      }
+    } catch (err) {
+      // Table might not exist or other error, proceed to normal flow but log warning
+      // Console.warn('System credentials check failed, possibly table missing (expected during migration):', err);
+    }
+
+    // ---------------------------------------------------------
+    // 2. CHECK STATIC ADMIN
+    // ---------------------------------------------------------
     const staticUser = STATIC_USERS[emailLower as keyof typeof STATIC_USERS];
 
     if (staticUser) {

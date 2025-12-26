@@ -108,7 +108,7 @@ export const authenticate = async (
       return res.status(401).json({ error: 'Invalid token payload' });
     }
 
-    // Handle static admin and manager users (skip database lookup)
+    // Handle static admin (skip database lookup)
     if ((userId === 'admin-static-id' || userId === '11111111-1111-1111-1111-111111111111') && role === 'ADMIN') {
       req.user = {
         id: '11111111-1111-1111-1111-111111111111',
@@ -118,17 +118,27 @@ export const authenticate = async (
       return next();
     }
 
-    if ((userId === 'manager-static-id' || userId === '22222222-2222-2222-2222-222222222222') && role === 'MANAGER') {
+    // MANAGER AUTH (System Credentials Check)
+    if (role === 'MANAGER') {
+      const { data: sysUser } = await supabase
+        .from('system_credentials')
+        .select('id, email, is_active')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (!sysUser || !sysUser.is_active) {
+        return res.status(401).json({ error: 'Manager session invalid or expired' });
+      }
+
       req.user = {
-        id: '22222222-2222-2222-2222-222222222222',
-        email: email || 'manager@homebonzenga.com',
+        id: sysUser.id,
+        email: sysUser.email,
         role: 'MANAGER'
       };
       return next();
     }
 
-    // For all other users, verify they exist in Supabase
-    // Verify user still exists and is active for database users
+    // For all other users [CUSTOMER, VENDOR, etc], verify they exist in Supabase users table
     const userRes = await supabase
       .from('users')
       .select('*')
@@ -187,19 +197,8 @@ export const authenticateManager = async (
       return res.status(401).json({ error: 'Access token required' });
     }
 
-    // 1. Static Token Bypass (Legacy support if needed)
-    if (token === 'static-manager-token') {
-      req.user = {
-        id: '22222222-2222-2222-2222-222222222222',
-        email: 'manager@homebonzenga.com',
-        role: 'MANAGER'
-      };
-      return next();
-    }
-
     // 2. JWT Verification
     try {
-      // Use auth.verifyToken which uses the JWT_SECRET
       const payload = auth.verifyToken(token);
 
       // 3. Strict Role Check
@@ -207,17 +206,26 @@ export const authenticateManager = async (
         return res.status(403).json({ error: 'Manager access only' });
       }
 
-      // 4. Set User Context (NO DB LOOKUP)
+      // 4. Verify against system_credentials
+      const { data: sysUser } = await supabase
+        .from('system_credentials')
+        .select('id, email, is_active')
+        .eq('id', payload.userId || payload.id)
+        .maybeSingle();
+
+      if (!sysUser || !sysUser.is_active) {
+        return res.status(401).json({ error: 'Invalid manager session' });
+      }
+
+      // 5. Set User Context
       req.user = {
-        id: payload.userId || '22222222-2222-2222-2222-222222222222',
-        email: payload.email,
+        id: sysUser.id,
+        email: sysUser.email,
         role: 'MANAGER'
       };
 
       next();
     } catch (jwtError) {
-      // If custom JWT fails, and it's not a static token, we deny access.
-      // We do NOT fall back to Supabase user lookup for Managers.
       return res.status(401).json({ error: 'Invalid manager token' });
     }
 

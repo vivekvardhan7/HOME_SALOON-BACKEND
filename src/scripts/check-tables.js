@@ -38,7 +38,8 @@ async function listTables() {
         'Employee', 'employee', 'Employees', 'employees',
         'Media', 'media',
         'Coupon', 'coupon', 'Coupons', 'coupons',
-        'AccessLog', 'access_log', 'AccessLogs', 'access_logs'
+        'AccessLog', 'access_log', 'AccessLogs', 'access_logs',
+        'SystemCredentials', 'system_credentials'
     ];
 
     for (const table of tablesToCheck) {

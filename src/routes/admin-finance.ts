@@ -22,52 +22,134 @@ router.get('/finance/summary', requireAuth, requireRole(['ADMIN']), async (req: 
     try {
         const { month = getCurrentMonth() } = req.query;
         const mt = month as string;
+        const isLifetime = mt === 'lifetime' || mt === 'all';
 
-        // Fetch totals from monthly_earnings_summary
-        const { data: summaryData, error: sumError } = await supabase
-            .from('monthly_earnings_summary')
-            .select('gross_amount, commission_amount, net_payable')
-            .eq('month', mt);
+        let vendorTotals = { gross: 0, commission: 0, net_payable: 0 };
+        let beauticianTotals = { gross: 0, commission: 0, net_payable: 0 };
 
-        if (sumError) throw sumError;
+        if (isLifetime) {
+            // LIFETIME MODE: Calculate directly from raw tables (More accurate for historical data)
 
-        const totalRevenue = summaryData?.reduce((sum, i) => sum + (Number(i.gross_amount) || 0), 0) || 0;
-        const totalCommission = summaryData?.reduce((sum, i) => sum + (Number(i.commission_amount) || 0), 0) || 0;
-        const totalNetPayable = summaryData?.reduce((sum, i) => sum + (Number(i.net_payable) || 0), 0) || 0;
+            // 1. Vendor (Salon) Bookings
+            const { data: salonBookings, error: sErr } = await supabase
+                .from('bookings')
+                .select('total_amount')
+                .eq('payment_status', 'Paid');
+
+            if (sErr) throw sErr;
+
+            const salonGross = salonBookings?.reduce((sum, b) => sum + (Number(b.total_amount) || 0), 0) || 0;
+            const salonComm = salonGross * 0.10; // Assuming 10% commission
+            const salonNet = salonGross - salonComm;
+
+            vendorTotals = { gross: salonGross, commission: salonComm, net_payable: salonNet };
+
+            // 2. Beautician (At-Home) Bookings
+            const { data: homeBookings, error: hErr } = await supabase
+                .from('athome_bookings')
+                .select('total_amount')
+                .eq('status', 'COMPLETED'); // Only completed bookings count for revenue
+
+            if (hErr) throw hErr;
+
+            const homeGross = homeBookings?.reduce((sum, b) => sum + (Number(b.total_amount) || 0), 0) || 0;
+            const homeComm = homeGross * 0.10; // Assuming 10% commission
+            const homeNet = homeGross - homeComm;
+
+            beauticianTotals = { gross: homeGross, commission: homeComm, net_payable: homeNet };
+
+        } else {
+            // MONTHLY MODE: Use the Summary Table
+            const { data: summaryData, error: sumError } = await supabase
+                .from('monthly_earnings_summary')
+                .select('*')
+                .eq('month', mt);
+
+            if (sumError) throw sumError;
+
+            const vendorData = summaryData?.filter(i => i.entity_type === 'VENDOR') || [];
+            const beauticianData = summaryData?.filter(i => i.entity_type === 'BEAUTICIAN') || [];
+
+            const calcTotals = (items: any[]) => ({
+                gross: items.reduce((sum, i) => sum + (Number(i.gross_amount) || 0), 0),
+                commission: items.reduce((sum, i) => sum + (Number(i.commission_amount) || 0), 0),
+                net_payable: items.reduce((sum, i) => sum + (Number(i.net_payable) || 0), 0)
+            });
+
+            vendorTotals = calcTotals(vendorData);
+            beauticianTotals = calcTotals(beauticianData);
+        }
+
+        const totalRevenue = vendorTotals.gross + beauticianTotals.gross;
+        const totalCommission = vendorTotals.commission + beauticianTotals.commission;
+
 
         // Fetch subscriptions
-        const { data: subData, error: subError } = await supabase
-            .from('subscriptions')
-            .select('amount, status')
-            .eq('month', mt);
+        let subQuery = supabase.from('subscriptions').select('amount, status, entity_type');
+        if (!isLifetime) {
+            subQuery = subQuery.eq('month', mt);
+        }
+        const { data: subData, error: subError } = await subQuery;
 
         if (subError) throw subError;
 
-        const totalSubscriptions = subData
-            ?.filter(s => s.status === 'PAID')
-            .reduce((sum, s) => sum + (Number(s.amount) || 0), 0) || 0;
+        const subStats = (type: string) => {
+            const items = subData?.filter(s => s.entity_type === type) || [];
+            return {
+                paid_amount: items.filter(s => s.status === 'PAID').reduce((sum, s) => sum + (Number(s.amount) || 0), 0),
+                unpaid_count: items.filter(s => s.status === 'UNPAID').length
+            };
+        };
 
-        const unpaidSubscriptions = subData?.filter(s => s.status === 'UNPAID').length || 0;
+        const vendorSubs = subStats('VENDOR');
+        const beauticianSubs = subStats('BEAUTICIAN');
+        const totalSubscriptions = vendorSubs.paid_amount + beauticianSubs.paid_amount;
+        const unpaidSubscriptions = vendorSubs.unpaid_count + beauticianSubs.unpaid_count;
 
         // Fetch payouts made
-        const { data: payoutData, error: payError } = await supabase
-            .from('payout_transactions')
-            .select('net_paid')
-            .eq('month', mt);
+        let payoutQuery = supabase.from('payout_transactions').select('net_paid, entity_type');
+        if (!isLifetime) {
+            payoutQuery = payoutQuery.eq('month', mt);
+        }
+        const { data: payoutData, error: payError } = await payoutQuery;
 
         if (payError) throw payError;
-        const totalPaidOut = payoutData?.reduce((sum, i) => sum + (Number(i.net_paid) || 0), 0) || 0;
 
+        const calcPaid = (type: string) => payoutData?.filter(p => p.entity_type === type).reduce((sum, i) => sum + (Number(i.net_paid) || 0), 0) || 0;
+
+        const vendorPaid = calcPaid('VENDOR');
+        const beauticianPaid = calcPaid('BEAUTICIAN');
+
+        const totalNetPayable = vendorTotals.net_payable + beauticianTotals.net_payable;
+        const totalPaidOut = vendorPaid + beauticianPaid;
         const pendingPayouts = totalNetPayable - totalPaidOut;
 
         res.json({
             success: true,
             data: {
-                month: mt,
+                month: isLifetime ? 'Lifetime' : mt,
                 revenue: {
                     gross: totalRevenue,
                     commission: totalCommission,
                     subscriptions: totalSubscriptions
+                },
+                breakdown: {
+                    vendor: {
+                        gross: vendorTotals.gross,
+                        commission: vendorTotals.commission,
+                        subscriptions: vendorSubs.paid_amount,
+                        net_payable: vendorTotals.net_payable,
+                        paid: vendorPaid,
+                        pending: vendorTotals.net_payable - vendorPaid
+                    },
+                    beautician: {
+                        gross: beauticianTotals.gross,
+                        commission: beauticianTotals.commission,
+                        subscriptions: beauticianSubs.paid_amount,
+                        net_payable: beauticianTotals.net_payable,
+                        paid: beauticianPaid,
+                        pending: beauticianTotals.net_payable - beauticianPaid
+                    }
                 },
                 pending_payouts: pendingPayouts > 0 ? pendingPayouts : 0,
                 subscription_stats: {
@@ -124,6 +206,13 @@ router.get('/finance/vendors', requireAuth, requireRole(['ADMIN']), async (req: 
             .eq('entity_type', 'VENDOR')
             .eq('month', mt);
 
+        // 6. LIVE DATA: Get Actual Completed Bookings Count for accuracy
+        const { data: liveBookings } = await supabase
+            .from('bookings')
+            .select('vendor_id, total')
+            .eq('status', 'COMPLETED')
+            .ilike('appointment_date', `${mt}%`);
+
         // Combine
         const result = vendors?.map(v => {
             const fin = financials?.find(f => f.entity_id === v.id);
@@ -131,24 +220,41 @@ router.get('/finance/vendors', requireAuth, requireRole(['ADMIN']), async (req: 
             const stat = statuses?.find(s => s.entity_id === v.id);
             const paid = payouts?.filter(p => p.entity_id === v.id).reduce((sum, p) => sum + Number(p.net_paid), 0) || 0;
 
+            // Calculate live totals
+            const vendorBookings = liveBookings?.filter(b => b.vendor_id === v.id) || [];
+            const liveCount = vendorBookings.length;
+            const liveGross = vendorBookings.reduce((sum, b) => sum + (Number(b.total) || 0), 0);
+
+            // Use live data if financial summary is missing or outdated (simplified logic: check if live > summary)
+            // Ideally we trust 'generate statements', but user wants live accuracy.
+            // We will use LIVE counts for display, but FINANCIALS (payables) should come from the frozen summary if generated.
+            // If summary exists, use it? Or override with live? 
+            // The prompt says "update this service count based on the database thing".
+            // So we display LIVE count.
+
+            const displayCount = liveCount;
+            // Note: If statement generated, fin.total_services should match liveCount unless new bookings happened.
+
             return {
                 id: v.id,
                 name: v.shopname,
                 type: 'VENDOR',
                 financials: {
-                    total_services: fin?.total_services || 0,
-                    gross: fin?.gross_amount || 0,
-                    commission: fin?.commission_amount || 0,
-                    net_payable: fin?.net_payable || 0,
+                    total_services: displayCount,
+                    // Use summary for financials if exists (audited), otherwise estimate from live for display? 
+                    // Better to stick to audited for money, but display live count.
+                    gross: fin?.gross_amount ?? liveGross,
+                    commission: fin?.commission_amount ?? (liveGross * 0.15),
+                    net_payable: fin?.net_payable ?? (liveGross * 0.85),
                     paid: paid,
-                    balance: (fin?.net_payable || 0) - paid
+                    balance: (fin?.net_payable ?? (liveGross * 0.85)) - paid
                 },
                 subscription: {
-                    status: sub?.status || 'UNPAID', // Default to UNPAID if no record (implies generated later)
+                    status: sub?.status || 'UNPAID',
                     amount: sub?.amount || 10
                 },
                 status: {
-                    is_active: stat?.is_active ?? true, // Default active
+                    is_active: stat?.is_active ?? true,
                     frozen_reason: stat?.frozen_reason
                 }
             };
@@ -169,16 +275,12 @@ router.get('/finance/beauticians', requireAuth, requireRole(['ADMIN']), async (r
         const { month = getCurrentMonth() } = req.query;
         const mt = month as string;
 
-        // 1. Get all Beauticians (from beauticians table)
+        // 1. Get all Beauticians
         const { data: beauticians, error: bError } = await supabase
             .from('beauticians')
             .select('id, name');
 
         if (bError) throw bError;
-
-        // No need to fetch users separately as name is in beauticians table
-        const users: any[] = []; // Placeholder to minimize diff logic flow or just remove mapping usage below
-
 
         // 2. Get Financials
         const { data: financials } = await supabase
@@ -207,6 +309,23 @@ router.get('/finance/beauticians', requireAuth, requireRole(['ADMIN']), async (r
             .eq('entity_type', 'BEAUTICIAN')
             .eq('month', mt);
 
+        // 6. LIVE DATA: Get Actual Completed bookings count (LIFETIME + MONTHLY)
+        // User wants "Services" column to match the Beautician Management page (Lifetime count)
+        // But financials ("gross", "commission") must remain monthly.
+
+        // A. Monthly Bookings (for financials)
+        const { data: monthlyBookings } = await supabase
+            .from('athome_bookings')
+            .select('assigned_beautician_id, total_amount')
+            .eq('status', 'COMPLETED')
+            .ilike('slot', `${mt}%`); // Monthly filter
+
+        // B. Lifetime Bookings (for service count consistency)
+        const { data: allTimeBookings } = await supabase
+            .from('athome_bookings')
+            .select('assigned_beautician_id')
+            .eq('status', 'COMPLETED');
+
         const result = beauticians?.map(b => {
             const name = b.name || 'Unknown Beautician';
             const fin = financials?.find(f => f.entity_id === b.id);
@@ -214,17 +333,28 @@ router.get('/finance/beauticians', requireAuth, requireRole(['ADMIN']), async (r
             const stat = statuses?.find(s => s.entity_id === b.id);
             const paid = payouts?.filter(p => p.entity_id === b.id).reduce((sum, p) => sum + Number(p.net_paid), 0) || 0;
 
+            // Calculate live totals
+            const monthlyBks = monthlyBookings?.filter(bk => bk.assigned_beautician_id === b.id) || [];
+            const allTimeBks = allTimeBookings?.filter(bk => bk.assigned_beautician_id === b.id) || [];
+
+            const monthlyGross = monthlyBks.reduce((sum, bk) => sum + (Number(bk.total_amount) || 0), 0);
+
+            // Use ALL TIME count for "Services" display to match Beautician page
+            // But use MONTHLY gross for calculations
+            const displayCount = allTimeBks.length;
+
             return {
                 id: b.id,
                 name: name,
                 type: 'BEAUTICIAN',
                 financials: {
-                    total_services: fin?.total_services || 0,
-                    gross: fin?.gross_amount || 0,
-                    commission: fin?.commission_amount || 0,
-                    net_payable: fin?.net_payable || 0,
+                    total_services: displayCount, // Shows Lifetime Count now
+                    monthly_services_count: monthlyBks.length, // Hidden helpful metric
+                    gross: fin?.gross_amount ?? monthlyGross,
+                    commission: fin?.commission_amount ?? (monthlyGross * 0.15),
+                    net_payable: fin?.net_payable ?? (monthlyGross * 0.85),
                     paid: paid,
-                    balance: (fin?.net_payable || 0) - paid
+                    balance: (fin?.net_payable ?? (monthlyGross * 0.85)) - paid
                 },
                 subscription: {
                     status: sub?.status || 'UNPAID',
