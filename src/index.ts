@@ -133,12 +133,31 @@ app.get('/api/health', (req, res) => {
 
 // Start server
 import { testSupabaseConnection } from './lib/supabase';
+import { findAvailablePort } from './utils/portChecker';
+import { Server } from 'http';
+
+let server: Server | null = null;
 
 const startServer = async () => {
   // Test DB connection first
   await testSupabaseConnection();
 
-  app.listen(PORT, async () => {
+  const ENABLE_PORT_FALLBACK = process.env.NODE_ENV === 'development';
+  const MAX_PORT_RETRIES = 5;
+
+  try {
+    const result = await findAvailablePort(app, {
+      startPort: Number(PORT),
+      maxRetries: MAX_PORT_RETRIES,
+      enableFallback: ENABLE_PORT_FALLBACK
+    });
+
+    server = result.server;
+    const actualPort = result.port;
+
+    if (actualPort !== Number(PORT)) {
+      console.log(`⚠️  Port ${PORT} was busy, using port ${actualPort} instead`);
+    }
 
     // Verify email transport (non-blocking)
     /*
@@ -147,18 +166,52 @@ const startServer = async () => {
     });
     */
 
-    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🚀 Server running on port ${actualPort}`);
     console.log(`🌐 CORS enabled for: ${allowedOrigins.join(', ')}`);
     console.log(`🌐 Also allowing all localhost origins in development`);
     console.log(`📝 Login credentials:`);
     console.log(`   Admin: admin@homebonzenga.com / admin123`);
     console.log(`   Manager: manager@homebonzenga.com / manager123`);
-    console.log(`\n📍 Login endpoint: http://localhost:${PORT}/api/auth/login`);
-    console.log(`📍 At-Salon Booking: http://localhost:${PORT}/api/at-salon-booking`);
-    console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
-    console.log(`\n💡 To test connection, visit: http://localhost:${PORT}/api/health`);
-  });
+    console.log(`\n📍 Login endpoint: http://localhost:${actualPort}/api/auth/login`);
+    console.log(`📍 At-Salon Booking: http://localhost:${actualPort}/api/at-salon-booking`);
+    console.log(`📍 Health check: http://localhost:${actualPort}/api/health`);
+    console.log(`\n💡 To test connection, visit: http://localhost:${actualPort}/api/health`);
+  } catch (err: any) {
+    if (err.message?.includes('Port') && err.message?.includes('in use')) {
+      console.error(`\n❌ ${err.message}`);
+      console.log(`\n💡 To fix this, run one of these commands:\n`);
+      console.log(`   Windows: Stop-Process -Name node -Force`);
+      console.log(`   macOS/Linux: lsof -ti:${PORT} | xargs kill -9`);
+      console.log(`   Cross-platform: npx kill-port ${PORT}\n`);
+    }
+    throw err;
+  }
 };
+
+// Graceful shutdown handler
+const gracefulShutdown = (signal: string) => {
+  console.log(`\n${signal} received. Closing server gracefully...`);
+
+  if (server) {
+    server.close(() => {
+      console.log('✅ Server closed successfully');
+      process.exit(0);
+    });
+
+    // Force close after 10 seconds
+    setTimeout(() => {
+      console.error('⚠️  Forcing server shutdown');
+      process.exit(1);
+    }, 10000);
+  } else {
+    process.exit(0);
+  }
+};
+
+// Register shutdown handlers
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGUSR2', () => gracefulShutdown('SIGUSR2')); // Nodemon restart signal
 
 startServer().catch(err => {
   console.error('❌ Failed to start server:', err);

@@ -4,7 +4,8 @@
   "description": "Backend API for Beauty Booking Marketplace",
   "main": "dist/index.js",
   "scripts": {
-    "dev": "nodemon --watch src --ext ts,tsx --exec ts-node src/index.ts",
+    "dev": "nodemon",
+    "dev:verbose": "nodemon --verbose",
     "dev:simple": "nodemon --watch src --ext ts,tsx --exec ts-node src/index-simple.ts",
     "start": "node dist/index.js",
     "start:check": "node start-server.js",
