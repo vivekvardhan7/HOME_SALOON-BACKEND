@@ -15,29 +15,83 @@ router.get('/dashboard', protect, async (req: AuthenticatedRequest, res: express
     console.log('📊 Fetching manager dashboard data from Supabase...');
 
     // Get vendor counts
-    const [pendingVendorsRes, approvedVendorsRes, totalVendorsRes, rejectedVendorsRes, pendingVendorListRes] = await Promise.all([
-      supabase.from('vendor').select('*', { count: 'exact', head: true }).eq('status', 'PENDING'),
-      supabase.from('vendor').select('*', { count: 'exact', head: true }).eq('status', 'APPROVED'),
-      supabase.from('vendor').select('*', { count: 'exact', head: true }),
-      supabase.from('vendor').select('*', { count: 'exact', head: true }).eq('status', 'REJECTED'),
-      supabase.from('vendor')
-        .select('*')
-        .eq('status', 'PENDING')
-        .order('created_at', { ascending: false })
-        .limit(10),
+    // 1. Pending: Look in USERS table (since they don't have vendor profiles yet)
+    const pendingUsersQuery = supabase
+      .from('users')
+      .select('*', { count: 'exact', head: true })
+      .eq('role', 'VENDOR')
+      .or('status.eq.PENDING_APPROVAL,status.eq.PENDING,status.eq.PENDING_VERIFICATION');
+
+    // 2. Approved: Look in VENDOR table
+    const approvedVendorsQuery = supabase
+      .from('vendor')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'APPROVED');
+
+    // 3. Total: Approved Vendors + Pending Users
+    const totalVendorsQuery = supabase
+      .from('vendor')
+      .select('*', { count: 'exact', head: true });
+
+    // 4. Rejected: Look in USERS table (since no vendor profile)
+    const rejectedUsersQuery = supabase
+      .from('users')
+      .select('*', { count: 'exact', head: true })
+      .eq('role', 'VENDOR')
+      .eq('status', 'REJECTED');
+
+    // 5. Get List of Pending Vendors (From Users table) to show in dashboard
+    const pendingListQuery = supabase
+      .from('users')
+      .select('*')
+      .eq('role', 'VENDOR')
+      .or('status.eq.PENDING_APPROVAL,status.eq.PENDING,status.eq.PENDING_VERIFICATION')
+      .order('created_at', { ascending: false })
+      .limit(10);
+
+    const [pendingRes, approvedRes, totalRes, rejectedRes, listRes] = await Promise.all([
+      pendingUsersQuery,
+      approvedVendorsQuery,
+      totalVendorsQuery,
+      rejectedUsersQuery,
+      pendingListQuery
     ]);
 
-    if (pendingVendorsRes.error) throw pendingVendorsRes.error;
-    if (approvedVendorsRes.error) throw approvedVendorsRes.error;
-    if (totalVendorsRes.error) throw totalVendorsRes.error;
-    if (rejectedVendorsRes.error) throw rejectedVendorsRes.error;
-    if (pendingVendorListRes.error) throw pendingVendorListRes.error;
+    const pendingVendorCount = pendingRes.count || 0;
+    const approvedVendorCount = approvedRes.count || 0;
+    const totalVendorCount = (totalRes.count || 0) + pendingVendorCount; // Approximation
+    const rejectedVendorCount = rejectedRes.count || 0;
+    const pendingUsersList = listRes.data || [];
 
-    const pendingVendorCount = pendingVendorsRes.count || 0;
-    const approvedVendorCount = approvedVendorsRes.count || 0;
-    const totalVendorCount = totalVendorsRes.count || 0;
-    const rejectedVendorCount = rejectedVendorsRes.count || 0;
-    const pendingVendorList = pendingVendorListRes.data || [];
+    // Enrich Pending List with Metadata (Shop Name) using RPC
+    const pendingVendors = await Promise.all(pendingUsersList.map(async (user) => {
+      try {
+        const { data: meta } = await supabase.rpc('get_user_meta_data', { target_user_id: user.id });
+        const safeMeta = meta || {};
+
+        return {
+          id: user.id,
+          shopName: String(safeMeta.shop_name || safeMeta.shopname || 'New Shop'),
+          description: String(safeMeta.description || ''),
+          address: String(safeMeta.address || ''),
+          city: String(safeMeta.city || ''),
+          state: String(safeMeta.state || ''),
+          zipCode: String(safeMeta.zip_code || safeMeta.zipCode || ''),
+          email: user.email,
+          phone: user.phone,
+          ownerName: `${user.first_name || ''} ${user.last_name || ''}`.trim(),
+          status: user.status,
+          createdAt: user.created_at
+        };
+      } catch (e) {
+        return {
+          id: user.id,
+          shopName: 'Unknown',
+          status: user.status,
+          createdAt: user.created_at
+        };
+      }
+    }));
 
     // Get appointment counts and recent appointments
     const [totalAppointmentsRes, completedAppointmentsRes, recentAppointmentsRes] = await Promise.all([
@@ -58,9 +112,9 @@ router.get('/dashboard', protect, async (req: AuthenticatedRequest, res: express
         .limit(10),
     ]);
 
-    if (totalAppointmentsRes.error) throw totalAppointmentsRes.error;
-    if (completedAppointmentsRes.error) throw completedAppointmentsRes.error;
-    if (recentAppointmentsRes.error) throw recentAppointmentsRes.error;
+    if (totalAppointmentsRes.error) console.error('Error fetching total appointments:', totalAppointmentsRes.error);
+    if (completedAppointmentsRes.error) console.error('Error fetching completed appointments:', completedAppointmentsRes.error);
+    if (recentAppointmentsRes.error) console.error('Error fetching recent appointments:', recentAppointmentsRes.error);
 
     const totalAppointments = totalAppointmentsRes.count || 0;
     const completedAppointments = completedAppointmentsRes.count || 0;
@@ -78,29 +132,11 @@ router.get('/dashboard', protect, async (req: AuthenticatedRequest, res: express
       completed: completedAppointments,
     };
 
-    const pendingVendors = pendingVendorList.map((vendor: any) => ({
-      id: vendor.id,
-      shopName: vendor.shopname || vendor.shopName,
-      description: vendor.description || null,
-      address: vendor.address || null,
-      city: vendor.city || null,
-      state: vendor.state || null,
-      zipCode: vendor.zip_code || vendor.zipCode || null,
-      email: vendor.user?.email || null,
-      phone: vendor.user?.phone || null,
-      ownerName: `${vendor.user?.first_name || vendor.user?.firstName || ''} ${vendor.user?.last_name || vendor.user?.lastName || ''}`.trim(),
-      serviceCount: 0, // Will need separate query if needed
-      productCount: 0, // Will need separate query if needed
-      employeeCount: 0, // Will need separate query if needed
-      status: vendor.status,
-      createdAt: vendor.created_at || vendor.createdAt,
-    }));
-
     const recentAppointments = recentAppointmentsRaw.map((appointment: any) => ({
       id: appointment.id,
       customerName: `${appointment.customer?.first_name || appointment.customer?.firstName || 'Unknown'} ${appointment.customer?.last_name || appointment.customer?.lastName || ''}`.trim(),
       vendorName: appointment.vendor?.shopname || appointment.vendor?.shopName || 'Unknown vendor',
-      serviceName: 'Service', // Will need to join with booking_items if needed
+      serviceName: 'Service',
       scheduledDate: appointment.scheduled_date || appointment.scheduledDate,
       scheduledTime: appointment.scheduled_time || appointment.scheduledTime,
       status: appointment.status,
@@ -121,97 +157,70 @@ router.get('/dashboard', protect, async (req: AuthenticatedRequest, res: express
   }
 });
 
-// Get pending vendors with full details
+// Get pending vendors with full details (New Flow: From Users + Metadata via RPC)
 router.get('/vendors/pending', protect, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
-    console.log('📋 Fetching pending vendors from Supabase...');
+    console.log('📋 Fetching pending vendors using RPC...');
 
-    // First, check if there are any vendors at all
-    const allVendorsRes = await supabase.from('vendor').select('*', { count: 'exact', head: true });
-    const allVendorsCount = allVendorsRes.count || 0;
-    console.log(`📊 Total vendors in database: ${allVendorsCount}`);
-
-    // Check vendors by status
-    const [pendingRes, approvedRes, rejectedRes] = await Promise.all([
-      supabase.from('vendor').select('*', { count: 'exact', head: true }).eq('status', 'PENDING'),
-      supabase.from('vendor').select('*', { count: 'exact', head: true }).eq('status', 'APPROVED'),
-      supabase.from('vendor').select('*', { count: 'exact', head: true }).eq('status', 'REJECTED'),
-    ]);
-
-    const pendingCount = pendingRes.count || 0;
-    const approvedCount = approvedRes.count || 0;
-    const rejectedCount = rejectedRes.count || 0;
-    console.log(`📊 Vendors by status - PENDING: ${pendingCount}, APPROVED: ${approvedCount}, REJECTED: ${rejectedCount}`);
-
-    const vendorsRes = await supabase
-      .from('vendor')
+    // 1. Fetch Users
+    const usersRes = await supabase
+      .from('users')
       .select('*')
-      .eq('status', 'PENDING')
+      .eq('role', 'VENDOR')
+      .or('status.eq.PENDING_APPROVAL,status.eq.PENDING_VERIFICATION,status.eq.PENDING')
       .order('created_at', { ascending: false });
 
-    if (vendorsRes.error) throw vendorsRes.error;
-    const vendors = vendorsRes.data || [];
+    if (usersRes.error) throw usersRes.error;
+    const users = usersRes.data || [];
 
-    console.log(`✅ Found ${vendors.length} pending vendors`);
+    console.log(`✅ Found ${users.length} pending vendor users`);
 
-    // Log details of each vendor
-    vendors.forEach((vendor, index) => {
-      console.log(`   Vendor ${index + 1}: ${vendor.shopName} (${vendor.id})`);
-      console.log(`      User: ${vendor.user?.firstName} ${vendor.user?.lastName} (${vendor.user?.email})`);
-      console.log(`      Services: ${vendor.services?.length || 0}, Products: ${vendor.products?.length || 0}, Employees: ${vendor.employees?.length || 0}`);
-    });
-
-    // Add stats to each pending vendor (with safe type conversions)
-    const vendorsWithInfo = vendors.map((vendor: any) => {
+    // 2. Enrich with RPC Metadata
+    const vendorsWithInfo = await Promise.all(users.map(async (user) => {
       try {
-        const createdAt = vendor.created_at || vendor.createdAt;
-        const createdAtStr = createdAt instanceof Date
-          ? createdAt.toISOString()
-          : (typeof createdAt === 'string' ? createdAt : new Date().toISOString());
-        const updatedAt = vendor.updated_at || vendor.updatedAt;
-        const updatedAtStr = updatedAt instanceof Date
-          ? updatedAt.toISOString()
-          : (typeof updatedAt === 'string' ? updatedAt : new Date().toISOString());
+        // Use RPC instead of auth.admin (works with Anon Key if RLS allows)
+        const { data: meta, error: rpcError } = await supabase
+          .rpc('get_user_meta_data', { target_user_id: user.id });
+
+        if (rpcError) {
+          console.error(`RPC Error for user ${user.id}:`, rpcError);
+          // Fallback to basic info
+          return {
+            id: user.id,
+            shopName: 'Unknown Shop (Meta Error)',
+            description: '',
+            address: '',
+            city: '',
+            state: '',
+            zipCode: '',
+            status: user.status,
+            createdAt: user.created_at,
+            updatedAt: user.updated_at,
+            user: user,
+            services: [], products: [], employees: [], serviceCount: 0, productCount: 0, employeeCount: 0
+          };
+        }
+
+        const safeMeta = meta || {};
 
         return {
-          id: String(vendor.id || ''),
-          shopName: String(vendor.shopname || vendor.shopName || 'Unknown'),
-          description: vendor.description || null,
-          address: String(vendor.address || ''),
-          city: String(vendor.city || ''),
-          state: String(vendor.state || ''),
-          zipCode: String(vendor.zip_code || vendor.zipCode || ''),
-          status: String(vendor.status || 'PENDING'),
-          createdAt: createdAtStr,
-          updatedAt: updatedAtStr,
-          user: vendor.user ? {
-            id: String(vendor.user.id || ''),
-            firstName: String(vendor.user.first_name || vendor.user.firstName || ''),
-            lastName: String(vendor.user.last_name || vendor.user.lastName || ''),
-            email: String(vendor.user.email || ''),
-            phone: String(vendor.user.phone || '')
-          } : null,
-          services: [], // Services would need separate query
-          products: [], // Products would need separate query
-          employees: [], // Employees would need separate query
-          serviceCount: 0,
-          productCount: 0,
-          employeeCount: 0
-        };
-      } catch (error: any) {
-        console.error(`⚠️ Error processing pending vendor ${vendor?.id}:`, error?.message || error);
-        return {
-          id: String(vendor?.id || 'unknown'),
-          shopName: String(vendor?.shopname || vendor?.shopName || 'Unknown'),
-          description: null,
-          address: '',
-          city: '',
-          state: '',
-          zipCode: '',
-          status: 'PENDING',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-          user: null,
+          id: user.id,
+          shopName: String(safeMeta.shop_name || safeMeta.shopname || 'New Shop'),
+          description: String(safeMeta.description || ''),
+          address: String(safeMeta.address || ''),
+          city: String(safeMeta.city || ''),
+          state: String(safeMeta.state || ''),
+          zipCode: String(safeMeta.zip_code || safeMeta.zipCode || ''),
+          status: user.status,
+          createdAt: user.created_at,
+          updatedAt: user.updated_at,
+          user: {
+            id: user.id,
+            firstName: user.first_name,
+            lastName: user.last_name,
+            email: user.email,
+            phone: user.phone
+          },
           services: [],
           products: [],
           employees: [],
@@ -219,24 +228,25 @@ router.get('/vendors/pending', protect, async (req: AuthenticatedRequest, res: e
           productCount: 0,
           employeeCount: 0
         };
+      } catch (err) {
+        console.error(`Error processing user ${user.id}`, err);
+        return null;
       }
-    });
+    }));
+
+    const validVendors = vendorsWithInfo.filter(v => v !== null);
 
     res.json({
       success: true,
-      vendors: vendorsWithInfo,
-      count: vendorsWithInfo.length
+      vendors: validVendors,
+      count: validVendors.length
     });
   } catch (error: any) {
     console.error('❌ Error fetching pending vendors:', error);
-    console.error('Error details:', error.message);
-    if (error.stack) {
-      console.error('Stack trace:', error.stack);
-    }
     res.status(500).json({
       success: false,
       message: 'Failed to fetch pending vendors',
-      error: process.env.NODE_ENV === 'development' ? error.message : undefined
+      error: error.message
     });
   }
 });
@@ -942,97 +952,67 @@ router.get('/vendors/:id/details', protect, async (req: AuthenticatedRequest, re
 
 const approveVendorHandler = async (req: express.Request, res: express.Response) => {
   try {
-    const { id } = req.params;
-    console.log(`📋 Approving vendor: ${id}`);
+    const { id } = req.params; // User ID
+    console.log(`📋 Approving vendor (Creating Profile via RPC): ${id}`);
 
-    // Get vendor with user info for email notification
-    const vendorRes = await supabase
+    // 1. Get Metadata via RPC (Reliable)
+    const { data: meta, error: rpcError } = await supabase
+      .rpc('get_user_meta_data', { target_user_id: id });
+
+    if (rpcError) {
+      console.error('RPC Error fetching metadata:', rpcError);
+      return res.status(500).json({ success: false, message: 'Failed to fetch user metadata' });
+    }
+
+    // 2. Create Vendor Record
+    // Check if exists
+    const { data: existingVendor } = await supabase
       .from('vendor')
-      .select('*')
-      .eq('id', id)
+      .select('id')
+      .eq('user_id', id)
       .single();
 
-    if (vendorRes.error || !vendorRes.data) {
-      return res.status(404).json({
-        success: false,
-        message: 'Vendor not found'
-      });
+    let vendorId = existingVendor?.id;
+    const safeMeta = meta || {};
+
+    if (!existingVendor) {
+      // Insert new vendor record
+      const { data: newVendor, error: insertError } = await supabase.from('vendor').insert({
+        user_id: id,
+        shopname: safeMeta.shop_name || safeMeta.shopname || 'New Shop',
+        description: safeMeta.description,
+        address: safeMeta.address,
+        city: safeMeta.city,
+        state: safeMeta.state,
+        zip_code: safeMeta.zip_code || safeMeta.zipCode,
+        latitude: parseFloat(safeMeta.latitude || '0') || null,
+        longitude: parseFloat(safeMeta.longitude || '0') || null,
+        status: 'APPROVED'
+      }).select().single();
+
+      if (insertError) throw insertError;
+      vendorId = newVendor.id;
+    } else {
+      // Update existing
+      await supabase.from('vendor').update({ status: 'APPROVED' }).eq('id', vendorId);
     }
 
-    const vendor = vendorRes.data;
+    // 3. Update User Status to ACTIVE
+    await supabase.from('users').update({ status: 'ACTIVE' }).eq('id', id);
 
-    // Fetch user data separately since we removed the join
-    const userRes = await supabase
-      .from('users')
-      .select('id, first_name, last_name, email')
-      .eq('id', vendor.user_id)
-      .single();
-
-    if (userRes.error || !userRes.data) {
-      return res.status(400).json({
-        success: false,
-        message: 'Vendor user information not found'
-      });
-    }
-
-    const user = userRes.data;
-
-    // Update vendor status
-    const previousStatus = vendor.status;
-    const updateRes = await supabase
-      .from('vendor')
-      .update({
-        status: 'APPROVED',
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (updateRes.error) throw updateRes.error;
-    const updatedVendor = updateRes.data;
-
-    // Create audit log for vendor approval (non-blocking) - skip if audit_log table doesn't exist
-    try {
-      await supabase.from('audit_log').insert({
-        user_id: user.id,
-        action: 'VENDOR_APPROVED',
-        resource: 'VENDOR',
-        resource_id: vendor.id,
-        old_data: JSON.stringify({ status: previousStatus }),
-        new_data: JSON.stringify({ status: 'APPROVED' })
-      });
-    } catch (auditError: any) {
-      console.error('⚠️ Failed to create audit log for vendor approval:', auditError?.message || auditError);
-      // Don't block approval if audit log fails
-    }
-
-    // Send approval email (non-blocking)
-    /*
-    sendVendorApprovalNotification({
-      email: user.email,
-      shopName: vendor.shopname || vendor.shopName,
-      ownerName: `${user.first_name || ''} ${user.last_name || ''}`.trim(),
-    }).catch((emailError: any) => {
-      console.error('⚠️ Failed to send approval email:', emailError?.message || emailError);
-    });
-    */
-
-    console.log(`✅ Vendor ${id} approved successfully`);
+    console.log(`✅ Vendor ${vendorId} approved and active.`);
 
     res.json({
       success: true,
       message: 'Vendor approved successfully',
-      vendor: updatedVendor
+      vendor: { id: vendorId, status: 'APPROVED' }
     });
   } catch (error: any) {
     console.error('❌ Error approving vendor:', error);
-    console.error('Error message:', error.message);
-    console.error('Error stack:', error.stack);
     res.status(500).json({
       success: false,
       message: 'Failed to approve vendor',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      error: error.message
     });
   }
 };
@@ -1042,99 +1022,46 @@ router.patch('/vendor/:id/approve', protect, approveVendorHandler);
 
 const rejectVendorHandler = async (req: express.Request, res: express.Response) => {
   try {
-    const { id } = req.params;
+    const { id } = req.params; // User ID
     const { reason } = req.body;
-    console.log(`📋 Rejecting vendor: ${id}`);
+    console.log(`📋 Rejecting vendor user: ${id}`);
 
-    // Get vendor with user info for email notification
-    const vendorRes = await supabase
-      .from('vendor')
-      .select('*')
-      .eq('id', id)
-      .single();
-
-    if (vendorRes.error || !vendorRes.data) {
-      return res.status(404).json({
-        success: false,
-        message: 'Vendor not found'
-      });
-    }
-
-    const vendor = vendorRes.data;
-
-    // Fetch user data separately since we removed the join
-    const userRes = await supabase
+    // Update User Status to REJECTED
+    // We don't have a vendor record to update, so we track it on the user
+    // Note: The schema might need 'REJECTED' added to any enum constraints if they exist
+    // But text column is fine.
+    const { error: updateError } = await supabase
       .from('users')
-      .select('id, first_name, last_name, email')
-      .eq('id', vendor.user_id)
-      .single();
+      .update({ status: 'REJECTED' })
+      .eq('id', id);
 
-    if (userRes.error || !userRes.data) {
-      return res.status(400).json({
-        success: false,
-        message: 'Vendor user information not found'
-      });
-    }
+    if (updateError) throw updateError;
 
-    const user = userRes.data;
-
-    // Update vendor status
-    const previousStatus = vendor.status;
-    const updateRes = await supabase
-      .from('vendor')
-      .update({
-        status: 'REJECTED',
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', id)
-      .select()
-      .single();
-
-    if (updateRes.error) throw updateRes.error;
-    const updatedVendor = updateRes.data;
-
-    // Create audit log for vendor rejection (non-blocking) - skip if audit_log table doesn't exist
+    // Create audit log (best effort)
     try {
       await supabase.from('audit_log').insert({
-        user_id: user.id,
+        user_id: id,
         action: 'VENDOR_REJECTED',
-        resource: 'VENDOR',
-        resource_id: vendor.id,
-        old_data: JSON.stringify({ status: previousStatus }),
+        resource: 'USER',
+        resource_id: id,
         new_data: JSON.stringify({ status: 'REJECTED', reason: reason || '' })
       });
     } catch (auditError) {
-      console.error('⚠️ Failed to create audit log for vendor rejection:', auditError);
-      // Don't block rejection if audit log fails
+      console.error('Audit log failed', auditError);
     }
 
-    // Send rejection email (non-blocking)
-    /*
-    sendVendorRejectionNotification({
-      email: user.email,
-      shopName: vendor.shopname || vendor.shopName,
-      ownerName: `${user.first_name || ''} ${user.last_name || ''}`.trim(),
-      reason: reason || '',
-    }).catch((emailError: any) => {
-      console.error('⚠️ Failed to send rejection email:', emailError?.message || emailError);
-    });
-    */
-
-    console.log(`✅ Vendor ${id} rejected successfully`);
+    console.log(`✅ Vendor user ${id} rejected successfully`);
 
     res.json({
       success: true,
-      message: 'Vendor rejected successfully',
-      vendor: updatedVendor
+      message: 'Vendor application rejected'
     });
   } catch (error: any) {
     console.error('❌ Error rejecting vendor:', error);
-    console.error('Error message:', error.message);
-    console.error('Error stack:', error.stack);
     res.status(500).json({
       success: false,
       message: 'Failed to reject vendor',
-      error: process.env.NODE_ENV === 'development' ? error.message : 'Internal server error'
+      error: error.message
     });
   }
 };

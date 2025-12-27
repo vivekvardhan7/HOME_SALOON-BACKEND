@@ -31,6 +31,29 @@ logs/
 npm-debug.log*
 yarn-debug.log*
 pnpm-debug.log*
+# Environment files
+.env
+.env.local
+.env.example
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+
+# OneDrive / Windows junk
+%AppData%/
+npm-cache/
+_cacache/
+
+# Build
+dist/
+build/
 
 # ===============================
 # Build Output

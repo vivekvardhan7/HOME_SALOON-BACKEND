@@ -503,7 +503,7 @@ router.patch('/vendors/:vendorId/status', protect, async (req, res) => {
     const { status, reason } = req.body;
 
     // Get vendor with user details before updating
-    const { data: vendorBefore, error: fetchError } = await supabase
+    let { data: vendorBefore, error: fetchError } = await supabase
       .from('vendor')
       .select(`
         *,
