@@ -13,15 +13,12 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Middleware
-const allowedOrigins = [
-  'http://localhost:3000',
-  'http://localhost:3003',
-  'http://localhost:5173',
-  'http://localhost:8081'
-];
-
 app.use(cors({
-  origin: true, // Reflects the request origin, effectively allowing all
+  origin: [
+    "http://localhost:3000",
+    "http://localhost:5173",
+    "https://home-saloon-frontend.vercel.app"
+  ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'apikey', 'X-Requested-With', 'Accept']
@@ -100,6 +97,14 @@ import adminFinanceRoutes from './routes/admin-finance';
 
 import publicConfigRoutes from './routes/public-config'; // Re-added
 
+// Health Check / Root Route (FIX 1)
+app.get("/", (req, res) => {
+  res.status(200).json({
+    status: "OK",
+    message: "Home Saloon Backend is running"
+  });
+});
+
 // Use routes
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/config', publicConfigRoutes); // Public Config Endpoint
@@ -133,7 +138,6 @@ app.get('/api/health', (req, res) => {
 
 // Start server
 import { testSupabaseConnection } from './lib/supabase';
-import { findAvailablePort } from './utils/portChecker';
 import { Server } from 'http';
 
 let server: Server | null = null;
@@ -142,50 +146,18 @@ const startServer = async () => {
   // Test DB connection first
   await testSupabaseConnection();
 
-  const ENABLE_PORT_FALLBACK = process.env.NODE_ENV === 'development';
-  const MAX_PORT_RETRIES = 5;
-
-  try {
-    const result = await findAvailablePort(app, {
-      startPort: Number(PORT),
-      maxRetries: MAX_PORT_RETRIES,
-      enableFallback: ENABLE_PORT_FALLBACK
-    });
-
-    server = result.server;
-    const actualPort = result.port;
-
-    if (actualPort !== Number(PORT)) {
-      console.log(`⚠️  Port ${PORT} was busy, using port ${actualPort} instead`);
-    }
-
-    // Verify email transport (non-blocking)
-    /*
-    verifyEmailTransport().catch((err: any) => {
-      console.warn('⚠️  Email service not available (non-critical):', err.message);
-    });
-    */
-
-    console.log(`🚀 Server running on port ${actualPort}`);
-    console.log(`🌐 CORS enabled for: ${allowedOrigins.join(', ')}`);
-    console.log(`🌐 Also allowing all localhost origins in development`);
+  // FIX 2 & 4: Correct PORT handling & Simple startup for Render
+  server = app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`🌐 CORS enabled for:`, ["http://localhost:3000", "http://localhost:5173", "https://home-saloon-frontend.vercel.app"].join(', '));
     console.log(`📝 Login credentials:`);
     console.log(`   Admin: admin@homebonzenga.com / admin123`);
     console.log(`   Manager: manager@homebonzenga.com / manager123`);
-    console.log(`\n📍 Login endpoint: http://localhost:${actualPort}/api/auth/login`);
-    console.log(`📍 At-Salon Booking: http://localhost:${actualPort}/api/at-salon-booking`);
-    console.log(`📍 Health check: http://localhost:${actualPort}/api/health`);
-    console.log(`\n💡 To test connection, visit: http://localhost:${actualPort}/api/health`);
-  } catch (err: any) {
-    if (err.message?.includes('Port') && err.message?.includes('in use')) {
-      console.error(`\n❌ ${err.message}`);
-      console.log(`\n💡 To fix this, run one of these commands:\n`);
-      console.log(`   Windows: Stop-Process -Name node -Force`);
-      console.log(`   macOS/Linux: lsof -ti:${PORT} | xargs kill -9`);
-      console.log(`   Cross-platform: npx kill-port ${PORT}\n`);
-    }
-    throw err;
-  }
+    console.log(`\n📍 Login endpoint: http://localhost:${PORT}/api/auth/login`);
+    console.log(`📍 At-Salon Booking: http://localhost:${PORT}/api/at-salon-booking`);
+    console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
+    console.log(`\n💡 To test connection, visit: http://localhost:${PORT}/api/health`);
+  });
 };
 
 // Graceful shutdown handler
