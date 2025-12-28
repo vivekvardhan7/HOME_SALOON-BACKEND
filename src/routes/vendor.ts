@@ -921,4 +921,34 @@ router.get('/:vendorId/financial-stats', authenticate, async (req, res) => {
   }
 });
 
+
+// Get vendor financial stats
+router.get('/:vendorId/financial-stats', authenticate, async (req, res) => {
+  try {
+    const { vendorId } = req.params;
+    console.log(`💰 Financial Stats Route - Vendor ID from request:`, vendorId);
+
+    // For now, return safe defaults as requested
+    // In production, this would aggregate real data from bookings/payouts tables
+    const stats = {
+      totalRevenue: 0,
+      totalBookings: 0,
+      completedBookings: 0,
+      pendingPayout: 0
+    };
+
+    return res.json({
+      success: true,
+      data: stats
+    });
+  } catch (error) {
+    console.error('❌ Financial Stats Route Error:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to fetch vendor financial stats',
+      error: 'Internal server error'
+    });
+  }
+});
+
 export default router;
