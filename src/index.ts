@@ -144,6 +144,11 @@ app.use('/api/customer', customerRoutes);
 app.use('/api/catalog', catalogRoutes);
 app.use('/api/invoices', invoiceRoutes);
 
+// Fix: Ensure no HTML fallback for API routes
+app.all('/api/*', (req, res) => {
+  res.status(404).json({ success: false, message: 'API route not found' });
+});
+
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'Auth server running with Supabase' });
