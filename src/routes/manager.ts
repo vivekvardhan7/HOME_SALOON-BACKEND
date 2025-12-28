@@ -9,151 +9,36 @@ const router = express.Router();
 // Middleware to protect routes - use proper JWT authentication
 const protect = authenticateManager;
 
-// Get manager dashboard data with comprehensive stats
+// Get manager dashboard data (Simplified logic to prevent 404/500 errors)
 router.get('/dashboard', protect, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
-    console.log('📊 Fetching manager dashboard data from Supabase...');
+    console.log('📊 Fetching safe manager dashboard data...');
 
-    // Get vendor counts
-    // 1. Pending: Look in USERS table (since they don't have vendor profiles yet)
-    const pendingUsersQuery = supabase
-      .from('users')
-      .select('*', { count: 'exact', head: true })
-      .eq('role', 'VENDOR')
-      .or('status.eq.PENDING_APPROVAL,status.eq.PENDING,status.eq.PENDING_VERIFICATION');
-
-    // 2. Approved: Look in VENDOR table
-    const approvedVendorsQuery = supabase
-      .from('vendor')
-      .select('*', { count: 'exact', head: true })
-      .eq('status', 'APPROVED');
-
-    // 3. Total: Approved Vendors + Pending Users
-    const totalVendorsQuery = supabase
-      .from('vendor')
-      .select('*', { count: 'exact', head: true });
-
-    // 4. Rejected: Look in USERS table (since no vendor profile)
-    const rejectedUsersQuery = supabase
-      .from('users')
-      .select('*', { count: 'exact', head: true })
-      .eq('role', 'VENDOR')
-      .eq('status', 'REJECTED');
-
-    // 5. Get List of Pending Vendors (From Users table) to show in dashboard
-    const pendingListQuery = supabase
-      .from('users')
-      .select('*')
-      .eq('role', 'VENDOR')
-      .or('status.eq.PENDING_APPROVAL,status.eq.PENDING,status.eq.PENDING_VERIFICATION')
-      .order('created_at', { ascending: false })
-      .limit(10);
-
-    const [pendingRes, approvedRes, totalRes, rejectedRes, listRes] = await Promise.all([
-      pendingUsersQuery,
-      approvedVendorsQuery,
-      totalVendorsQuery,
-      rejectedUsersQuery,
-      pendingListQuery
-    ]);
-
-    const pendingVendorCount = pendingRes.count || 0;
-    const approvedVendorCount = approvedRes.count || 0;
-    const totalVendorCount = (totalRes.count || 0) + pendingVendorCount; // Approximation
-    const rejectedVendorCount = rejectedRes.count || 0;
-    const pendingUsersList = listRes.data || [];
-
-    // Enrich Pending List with Metadata (Shop Name) using RPC
-    const pendingVendors = await Promise.all(pendingUsersList.map(async (user) => {
-      try {
-        const { data: meta } = await supabase.rpc('get_user_meta_data', { target_user_id: user.id });
-        const safeMeta = meta || {};
-
-        return {
-          id: user.id,
-          shopName: String(safeMeta.shop_name || safeMeta.shopname || 'New Shop'),
-          description: String(safeMeta.description || ''),
-          address: String(safeMeta.address || ''),
-          city: String(safeMeta.city || ''),
-          state: String(safeMeta.state || ''),
-          zipCode: String(safeMeta.zip_code || safeMeta.zipCode || ''),
-          email: user.email,
-          phone: user.phone,
-          ownerName: `${user.first_name || ''} ${user.last_name || ''}`.trim(),
-          status: user.status,
-          createdAt: user.created_at
-        };
-      } catch (e) {
-        return {
-          id: user.id,
-          shopName: 'Unknown',
-          status: user.status,
-          createdAt: user.created_at
-        };
-      }
-    }));
-
-    // Get appointment counts and recent appointments
-    const [totalAppointmentsRes, completedAppointmentsRes, recentAppointmentsRes] = await Promise.all([
-      supabase.from('bookings').select('*', { count: 'exact', head: true }),
-      supabase.from('bookings').select('*', { count: 'exact', head: true }).eq('status', 'COMPLETED'),
-      supabase.from('bookings')
-        .select(`
-          *,
-          customer:users!bookings_customer_id_fkey (
-            first_name,
-            last_name
-          ),
-          vendor:vendor!bookings_vendor_id_fkey (
-            shopname
-          )
-        `)
-        .order('created_at', { ascending: false })
-        .limit(10),
-    ]);
-
-    if (totalAppointmentsRes.error) console.error('Error fetching total appointments:', totalAppointmentsRes.error);
-    if (completedAppointmentsRes.error) console.error('Error fetching completed appointments:', completedAppointmentsRes.error);
-    if (recentAppointmentsRes.error) console.error('Error fetching recent appointments:', recentAppointmentsRes.error);
-
-    const totalAppointments = totalAppointmentsRes.count || 0;
-    const completedAppointments = completedAppointmentsRes.count || 0;
-    const recentAppointmentsRaw = recentAppointmentsRes.data || [];
-
-    const vendorStats = {
-      pending: pendingVendorCount,
-      approved: approvedVendorCount,
-      total: totalVendorCount,
-      rejected: rejectedVendorCount,
+    // Placeholder safe response as requested to fix 404/500 issues
+    // Real aggregation logic can be restored later once connectivity is verified
+    const dashboardData = {
+      totalVendors: 0,
+      totalBookings: 0,
+      pendingApprovals: 0,
+      todayBookings: 0,
+      // Keeping these structures empty/zeroed just in case frontend relies on them (based on previous code)
+      vendorStats: { pending: 0, approved: 0, total: 0, rejected: 0 },
+      appointmentStats: { total: 0, completed: 0 },
+      pendingVendors: [],
+      recentAppointments: []
     };
 
-    const appointmentStats = {
-      total: totalAppointments,
-      completed: completedAppointments,
-    };
-
-    const recentAppointments = recentAppointmentsRaw.map((appointment: any) => ({
-      id: appointment.id,
-      customerName: `${appointment.customer?.first_name || appointment.customer?.firstName || 'Unknown'} ${appointment.customer?.last_name || appointment.customer?.lastName || ''}`.trim(),
-      vendorName: appointment.vendor?.shopname || appointment.vendor?.shopName || 'Unknown vendor',
-      serviceName: 'Service',
-      scheduledDate: appointment.scheduled_date || appointment.scheduledDate,
-      scheduledTime: appointment.scheduled_time || appointment.scheduledTime,
-      status: appointment.status,
-    }));
-
-    res.json({
+    return res.json({
       success: true,
-      data: {
-        vendorStats,
-        appointmentStats,
-        pendingVendors,
-        recentAppointments,
-      },
+      data: dashboardData
     });
   } catch (error: any) {
     console.error('❌ Error fetching manager dashboard:', error);
-    res.status(500).json({ success: false, message: 'Failed to fetch manager dashboard data', error: error.message });
+    return res.status(500).json({
+      success: false,
+      message: 'Failed to load manager dashboard',
+      error: error.message
+    });
   }
 });
 
