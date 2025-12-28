@@ -1447,7 +1447,7 @@ router.get('/athome/products', protect, async (req, res) => {
  */
 router.post('/athome/products', protect, async (req, res) => {
   try {
-    const { name, description, price, image_url, is_active } = req.body;
+    const { name, description, category, price, image_url, is_active } = req.body;
 
     // Insert ONLY into admin_products
     const { data, error } = await supabase
@@ -1455,6 +1455,7 @@ router.post('/athome/products', protect, async (req, res) => {
       .insert([{
         name,
         description,
+        category,
         price: Number(price),
         image_url,
         is_active: is_active ?? true
@@ -1471,6 +1472,105 @@ router.post('/athome/products', protect, async (req, res) => {
       message: 'Failed to create product in master catalog',
       error: error.message
     });
+  }
+});
+
+/**
+ * @api {put} /api/admin/athome/services/:id Update Master Service
+ */
+router.put('/athome/services/:id', protect, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, description, category, price, duration_minutes, image_url, is_active } = req.body;
+
+    const { data, error } = await supabase
+      .from('admin_services')
+      .update({
+        name,
+        description,
+        category,
+        price: Number(price),
+        duration_minutes: Number(duration_minutes),
+        image_url,
+        is_active
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json({ success: true, data });
+  } catch (error: any) {
+    console.error('Error updating master service:', error);
+    res.status(500).json({ success: false, message: 'Failed to update service', error: error.message });
+  }
+});
+
+/**
+ * @api {delete} /api/admin/athome/services/:id Delete Master Service
+ */
+router.delete('/athome/services/:id', protect, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { error } = await supabase
+      .from('admin_services')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+    res.json({ success: true, message: 'Service deleted successfully' });
+  } catch (error: any) {
+    console.error('Error deleting master service:', error);
+    res.status(500).json({ success: false, message: 'Failed to delete service', error: error.message });
+  }
+});
+
+/**
+ * @api {put} /api/admin/athome/products/:id Update Master Product
+ */
+router.put('/athome/products/:id', protect, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, description, category, price, image_url, is_active } = req.body;
+
+    const { data, error } = await supabase
+      .from('admin_products')
+      .update({
+        name,
+        description,
+        category,
+        price: Number(price),
+        image_url,
+        is_active
+      })
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) throw error;
+    res.json({ success: true, data });
+  } catch (error: any) {
+    console.error('Error updating master product:', error);
+    res.status(500).json({ success: false, message: 'Failed to update product', error: error.message });
+  }
+});
+
+/**
+ * @api {delete} /api/admin/athome/products/:id Delete Master Product
+ */
+router.delete('/athome/products/:id', protect, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { error } = await supabase
+      .from('admin_products')
+      .delete()
+      .eq('id', id);
+
+    if (error) throw error;
+    res.json({ success: true, message: 'Product deleted successfully' });
+  } catch (error: any) {
+    console.error('Error deleting master product:', error);
+    res.status(500).json({ success: false, message: 'Failed to delete product', error: error.message });
   }
 });
 
