@@ -849,6 +849,8 @@ router.patch('/:vendorId/appointments/:appointmentId/start', authenticate, async
 router.get('/:vendorId/financial-stats', authenticate, async (req, res) => {
   try {
     const { vendorId: userId } = req.params;
+    console.log('💰 Financial Stats Route Hit. Param (userId):', userId);
+
     const currentMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
 
     // 1. Get Vendor
@@ -858,7 +860,10 @@ router.get('/:vendorId/financial-stats', authenticate, async (req, res) => {
       .eq('user_id', userId)
       .single();
 
+    console.log('Stats - Vendor Lookup:', vendor ? 'Found' : 'Not Found', vErr ? vErr.message : '');
+
     if (vErr || !vendor) {
+      console.warn('⚠️ Financial Stats - Vendor not found for user:', userId);
       return res.status(404).json({ success: false, message: 'Vendor not found' });
     }
 
