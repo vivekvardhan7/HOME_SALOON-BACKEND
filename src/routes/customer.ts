@@ -587,173 +587,46 @@ router.post('/bookings', requireAuth, requireRole(['CUSTOMER']), async (req: Aut
 // ==================== BOOKING MANAGEMENT ====================
 
 // Get customer bookings (Updated for At-Home Phase 2 - Separate Queries Strategy)
+// Get all customer bookings (Salon + At-Home)
 router.get('/bookings', requireAuth, requireRole(['CUSTOMER']), async (req: AuthenticatedRequest, res) => {
   try {
-    const { page = 1, limit = 10, status } = req.query;
-    const skip = (Number(page) - 1) * Number(limit);
-    const customerId = req.user!.id;
+    const userId = req.user!.id;
+    const userEmail = req.user!.email;
 
-    // 1. Fetch Master Bookings
-    const { data: bookingsDoc, count, error: bookingsError } = await supabase
+    // 1. Fetch SALON bookings from vendor_orders (linked by email)
+    // Using ilike for robust email matching
+    const { data: salonData, error: salonError } = await supabase
+      .from('vendor_orders')
+      .select(`*, vendor:vendor!vendor_id(*)`)
+      .ilike('customer_email', userEmail)
+      .order('created_at', { ascending: false });
+
+    if (salonError) {
+      console.error('Error fetching salon bookings:', salonError);
+    }
+
+    // 2. Fetch AT-HOME bookings
+    // Using service role client (supabase) ensures RLS bypass
+    // Also ensuring we get related data safely
+    const { data: athomeData, error: athomeError } = await supabase
       .from('athome_bookings')
-      .select('*', { count: 'exact' })
-      .eq('customer_id', customerId)
-      .eq('payment_status', 'SUCCESS')
-      .order('created_at', { ascending: false })
-      .range(skip, skip + Number(limit) - 1);
+      .select(`
+          *,
+          beautician:beauticians!athome_bookings_assigned_beautician_id_fkey (*)
+      `)
+      .eq('customer_id', userId)
+      .order('created_at', { ascending: false });
 
-    if (bookingsError) throw bookingsError;
-    const bookings = bookingsDoc || [];
-
-    // 2. Collect IDs
-    const bookingIds = bookings.map((b: any) => b.id);
-    const assignedBeauticianIds = bookings.map((b: any) => b.assigned_beautician_id).filter((id: string) => id);
-
-    let beauticiansMap: Record<string, any> = {};
-    if (assignedBeauticianIds.length > 0) {
-      const { data: beauticians } = await supabase
-        .from('beauticians')
-        .select('id, name, phone, photo')
-        .in('id', assignedBeauticianIds);
-
-      beauticians?.forEach((b: any) => beauticiansMap[b.id] = b);
+    if (athomeError) {
+      console.error('Error fetching athome bookings:', athomeError);
     }
 
-    // 3. Fetch Related Services (Manual Join)
-    let servicesMap: Record<string, any[]> = {};
-    if (bookingIds.length > 0) {
-      // Fetch booking_services
-      const { data: servicesData, error: servicesError } = await supabase
-        .from('athome_booking_services')
-        .select('id, booking_id, service_price, duration_minutes, admin_service_id')
-        .in('booking_id', bookingIds);
-
-      if (servicesError) console.warn('Warning: Failed to fetch services for bookings', servicesError);
-
-      const adminServiceIds = [...new Set((servicesData || []).map((s: any) => s.admin_service_id))];
-
-      // Fetch admin_services details
-      let adminServicesMap: Record<string, any> = {};
-      if (adminServiceIds.length > 0) {
-        const { data: adminServices, error: adminError } = await supabase
-          .from('admin_services')
-          .select('id, name, description, duration_minutes')
-          .in('id', adminServiceIds);
-
-        if (!adminError && adminServices) {
-          adminServices.forEach((as: any) => adminServicesMap[as.id] = as);
-        }
-      }
-
-      (servicesData || []).forEach((s: any) => {
-        if (!servicesMap[s.booking_id]) servicesMap[s.booking_id] = [];
-        // Attach admin details manually
-        servicesMap[s.booking_id].push({
-          ...s,
-          admin_service: adminServicesMap[s.admin_service_id] || null
-        });
-      });
-    }
-
-    // 4. Fetch Related Products (Manual Join)
-    let productsMap: Record<string, any[]> = {};
-    if (bookingIds.length > 0) {
-      const { data: productsData, error: productsError } = await supabase
-        .from('athome_booking_products')
-        .select('id, booking_id, quantity, product_price, admin_product_id')
-        .in('booking_id', bookingIds);
-
-      if (productsError) console.warn('Warning: Failed to fetch products for bookings', productsError);
-
-      const adminProductIds = [...new Set((productsData || []).map((p: any) => p.admin_product_id))];
-
-      let adminProductsMap: Record<string, any> = {};
-      if (adminProductIds.length > 0) {
-        const { data: adminProducts, error: adminProdError } = await supabase
-          .from('admin_products')
-          .select('id, name, description')
-          .in('id', adminProductIds);
-
-        if (!adminProdError && adminProducts) {
-          adminProducts.forEach((ap: any) => adminProductsMap[ap.id] = ap);
-        }
-      }
-
-      (productsData || []).forEach((p: any) => {
-        if (!productsMap[p.booking_id]) productsMap[p.booking_id] = [];
-        productsMap[p.booking_id].push({
-          ...p,
-          admin_product: adminProductsMap[p.admin_product_id] || null
-        });
-      });
-    }
-
-    // 5. Transform & Combine
-    const transformedBookings = bookings.map((b: any) => {
-      // Map services
-      const bookingServices = servicesMap[b.id] || [];
-      const serviceItems = bookingServices.map((s: any) => ({
-        service_id: s.admin_service?.id || s.admin_service_id,
-        name: s.admin_service?.name || 'Service',
-        price: s.service_price,
-        duration: s.duration_minutes,
-        quantity: 1,
-        type: 'SERVICE'
-      }));
-
-      // Map products
-      const bookingProducts = productsMap[b.id] || [];
-      const productItems = bookingProducts.map((p: any) => ({
-        service_id: p.admin_product?.id || p.admin_product_id, // Map to same ID field for frontend compatibility
-        name: p.admin_product?.name || 'Product',
-        price: p.product_price,
-        quantity: p.quantity,
-        is_product: true,
-        type: 'PRODUCT'
-      }));
-
-      // Fix total amount issue (if 0, likely data issue, sum items as fallback)
-      let displayTotal = b.total_amount;
-      if (!displayTotal || displayTotal === 0) {
-        const sTotal = bookingServices.reduce((sum: number, s: any) => sum + (Number(s.service_price) || 0), 0);
-        const pTotal = bookingProducts.reduce((sum: number, p: any) => sum + ((Number(p.product_price) || 0) * (p.quantity || 1)), 0);
-        displayTotal = sTotal + pTotal;
-      }
-
-      // Friendly Status Logic
-      let displayStatus = b.status || 'PENDING';
-      if (displayStatus === 'PENDING' && b.assigned_beautician_id) {
-        displayStatus = 'ASSIGNED';
-      }
-
-      return {
-        id: b.id,
-        customer_id: b.customer_id,
-        booking_type: 'AT_HOME',
-        status: displayStatus,
-        payment_status: b.payment_status,
-        total: displayTotal,
-        scheduledDate: b.slot ? b.slot.split(' ')[0] : b.created_at,
-        scheduledTime: b.slot ? b.slot.split(' ')[1] : '10:00 AM',
-        address: b.address,
-        beautician: b.assigned_beautician_id ? beauticiansMap[b.assigned_beautician_id] : null,
-        created_at: b.created_at,
-        items: [...serviceItems, ...productItems],
-        payments: [{
-          status: 'COMPLETED',
-          amount: b.total_amount
-        }]
-      };
-    });
-
+    // Return the raw data arrays - frontend will process them
     res.json({
       success: true,
-      data: transformedBookings,
-      pagination: {
-        page: Number(page),
-        limit: Number(limit),
-        total: count || 0,
-        pages: Math.ceil((count || 0) / Number(limit))
+      data: {
+        salonBookings: salonData || [],
+        atHomeBookings: athomeData || []
       }
     });
 
@@ -1313,5 +1186,8 @@ router.get('/athome-bookings/:id', requireAuth, requireRole(['CUSTOMER']), async
     res.status(500).json({ success: false, message: 'Failed to fetch booking details' });
   }
 });
+
+
+// ==================== END OF ROUTES ====================
 
 export default router;

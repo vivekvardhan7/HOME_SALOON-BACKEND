@@ -182,13 +182,13 @@ router.get('/download/:bookingId', async (req, res) => {
         const items = invoice.items_snapshot;
         items.services.forEach((s: any) => {
             doc.text(`Service: ${s.name}`, 50, y);
-            doc.text(`${s.price?.toLocaleString()} CDF`, 450, y, { width: 90, align: 'right' });
+            doc.text(`$${s.price?.toLocaleString()}`, 450, y, { width: 90, align: 'right' });
             y += 20;
         });
         items.products.forEach((p: any) => {
             doc.text(`Product: ${p.name} (x${p.qty})`, 50, y);
             const total = (p.price || 0) * (p.qty || 1);
-            doc.text(`${total.toLocaleString()} CDF`, 450, y, { width: 90, align: 'right' });
+            doc.text(`$${total.toLocaleString()}`, 450, y, { width: 90, align: 'right' });
             y += 20;
         });
 
@@ -200,7 +200,7 @@ router.get('/download/:bookingId', async (req, res) => {
         const fin = invoice.financial_breakdown;
         doc.font('Helvetica-Bold');
         doc.text('Total Paid:', 350, y);
-        doc.text(`${fin.total.toLocaleString()} CDF`, 450, y, { width: 90, align: 'right' });
+        doc.text(`$${fin.total.toLocaleString()}`, 450, y, { width: 90, align: 'right' });
 
         // FOOTER
         doc

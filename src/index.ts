@@ -1,4 +1,5 @@
-import 'dotenv/config'; // Load environment variables first, ensuring it runs before other imports
+import 'dotenv/config'; // Load environment variables first
+// Force restart trigger
 // Restart trigger (2025-12-25 04:21)
 require('../config.js');
 
