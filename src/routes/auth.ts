@@ -236,12 +236,12 @@ router.get('/vendor-status/:supabaseUserId', async (req, res) => {
 const STATIC_USERS = {
   'admin@homebonzenga.com': {
     id: 'admin-static-id',
-    email: 'admin@homebonzenga.com',
+    email: 'Admin@homebonzenga.com',
     firstName: 'System',
     lastName: 'Admin',
     role: 'ADMIN',
     status: 'ACTIVE',
-    password: 'Admin@123', // Plain text for static comparison
+    password: 'Admin@19A', // Plain text for static comparison
   }
 };
 
