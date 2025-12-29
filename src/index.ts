@@ -15,23 +15,11 @@ const PORT = process.env.PORT || 3001;
 
 // Middleware
 app.use(cors({
-  origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-    const allowedOrigins = [
-      "http://localhost:3000",
-      "http://localhost:5173",
-      "http://localhost:3003",
-      "https://home-saloon-frontend.vercel.app"
-    ];
-
-    // Allow requests with no origin (like mobile apps or curl requests)
-    if (!origin) return callback(null, true);
-
-    if (allowedOrigins.indexOf(origin) !== -1) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
-    }
-  },
+  origin: [
+    "http://localhost:5173",
+    "https://homebonzenga.com",
+    "https://www.homebonzenga.com"
+  ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'apikey', 'X-Requested-With', 'Accept']
@@ -170,10 +158,9 @@ const startServer = async () => {
   server = app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT}`);
     const allowedOrigins = [
-      "http://localhost:3000",
       "http://localhost:5173",
-      "http://localhost:3003",
-      "https://home-saloon-frontend.vercel.app"
+      "https://homebonzenga.com",
+      "https://www.homebonzenga.com"
     ];
     console.log(`🌐 CORS enabled for: ${allowedOrigins.join(', ')}`);
     console.log(`📝 Login credentials:`);
