@@ -89,7 +89,7 @@ import bookingRoutes from './routes/bookings';
 import productsRoutes from './routes/products';
 import vendorApiRoutes from './routes/vendor';
 import authRoutes from './routes/auth';
-import managerRoutes from './routes/manager';
+import managerRoutes from './routes/manager-routes';
 import managerBookingsRoutes from './routes/manager-bookings';
 import invoiceRoutes from './routes/invoicing';
 import managerAthomeBookingsRoutes from './routes/manager-athome-bookings'; // Added
@@ -131,6 +131,8 @@ app.use("/api/vendor", vendorEmployeesRoutes);
 app.use('/api/vendor', vendorApiRoutes);
 app.use('/api/vendor/bookings', vendorBookingsRoutes);
 app.use('/api/auth', authRoutes);
+
+console.log('✅ Registering Manager Routes at /api/manager');
 app.use('/api/manager', managerRoutes);
 app.use('/api/manager/bookings', managerBookingsRoutes);
 app.use('/api/manager/athome-bookings', managerAthomeBookingsRoutes); // Added

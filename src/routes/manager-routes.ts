@@ -5,27 +5,110 @@ import type { AuthenticatedRequest } from '../middleware/auth';
 import { supabase } from '../lib/supabase';
 
 const router = express.Router();
+console.log('✅ Loaded Manager Routes Module (manager-routes.ts)');
 
 // Middleware to protect routes - use proper JWT authentication
 const protect = authenticateManager;
 
 // Get manager dashboard data (Simplified logic to prevent 404/500 errors)
+// Get manager dashboard data
 router.get('/dashboard', protect, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
-    console.log('📊 Fetching safe manager dashboard data...');
+    console.log('📊 Fetching REAL manager dashboard data...');
 
-    // Placeholder safe response as requested to fix 404/500 issues
-    // Real aggregation logic can be restored later once connectivity is verified
+    // Execute queries in parallel for performance
+    const [
+      pendingVendorsRes,
+      activeVendorsRes,
+      rejectedVendorsRes,
+      totalBookingsRes,
+      todayBookingsRes,
+      recentPendingRes
+    ] = await Promise.all([
+      // 1. Pending Vendors (from users table where role=VENDOR and status is pending)
+      supabase
+        .from('users')
+        .select('id', { count: 'exact', head: true })
+        .eq('role', 'VENDOR')
+        .or('status.eq.PENDING_APPROVAL,status.eq.PENDING_VERIFICATION,status.eq.PENDING'),
+
+      // 2. Total Active Vendors (from vendor table where status=APPROVED)
+      supabase
+        .from('vendor')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'APPROVED'),
+
+      // 3. Rejected Vendors
+      supabase
+        .from('users')
+        .select('id', { count: 'exact', head: true })
+        .eq('role', 'VENDOR')
+        .eq('status', 'REJECTED'),
+
+      // 4. Total Appointments/Bookings
+      supabase
+        .from('bookings')
+        .select('id', { count: 'exact', head: true }),
+
+      // 5. Today's Appointments
+      supabase
+        .from('bookings')
+        .select('id', { count: 'exact', head: true })
+        .eq('status', 'CONFIRMED') // Assuming we only care about confirmed ones today
+        .eq('scheduled_date', new Date().toISOString().split('T')[0]),
+
+      // 6. Recent Pending Applications (get top 5)
+      supabase
+        .from('users')
+        .select('*')
+        .eq('role', 'VENDOR')
+        .or('status.eq.PENDING_APPROVAL,status.eq.PENDING_VERIFICATION,status.eq.PENDING')
+        .order('created_at', { ascending: false })
+        .limit(5)
+    ]);
+
+    // Check for errors
+    if (pendingVendorsRes.error) console.error('Error fetching pending vendors:', pendingVendorsRes.error);
+    if (activeVendorsRes.error) console.error('Error fetching active vendors:', activeVendorsRes.error);
+    if (totalBookingsRes.error) console.error('Error fetching bookings:', totalBookingsRes.error);
+
+    const pendingCount = pendingVendorsRes.count || 0;
+    const activeCount = activeVendorsRes.count || 0;
+    const rejectedCount = rejectedVendorsRes.count || 0;
+    const totalBookings = totalBookingsRes.count || 0;
+    const todayBookings = todayBookingsRes.count || 0;
+
+    // Process recent pending vendors to partial shape
+    const recentPending = (recentPendingRes.data || []).map((u: any) => ({
+      id: u.id,
+      firstName: u.first_name,
+      lastName: u.last_name,
+      email: u.email,
+      status: u.status,
+      createdAt: u.created_at
+    }));
+
     const dashboardData = {
-      totalVendors: 0,
-      totalBookings: 0,
-      pendingApprovals: 0,
-      todayBookings: 0,
-      // Keeping these structures empty/zeroed just in case frontend relies on them (based on previous code)
-      vendorStats: { pending: 0, approved: 0, total: 0, rejected: 0 },
-      appointmentStats: { total: 0, completed: 0 },
-      pendingVendors: [],
-      recentAppointments: []
+      totalVendors: activeCount,
+      totalBookings: totalBookings,
+      pendingApprovals: pendingCount,
+      todayBookings: todayBookings,
+      rejectedVendors: rejectedCount,
+
+      // Detailed stats structures commonly used by frontend
+      vendorStats: {
+        pending: pendingCount,
+        approved: activeCount,
+        rejected: rejectedCount,
+        total: pendingCount + activeCount + rejectedCount
+      },
+      appointmentStats: {
+        total: totalBookings,
+        completed: 0, // optimizing: separate query if needed, or just 0 for now
+        today: todayBookings
+      },
+      pendingVendors: recentPending,
+      recentAppointments: [] // Can allow empty for now to save a query
     };
 
     return res.json({
