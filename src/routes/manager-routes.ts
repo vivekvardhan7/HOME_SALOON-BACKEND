@@ -15,100 +15,152 @@ const protect = authenticateManager;
 router.get('/dashboard', protect, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
     console.log('📊 Fetching REAL manager dashboard data...');
+    console.log('📊 Fetching manager dashboard data...');
 
-    // Execute queries in parallel for performance
-    const [
-      pendingVendorsRes,
-      activeVendorsRes,
-      rejectedVendorsRes,
-      totalBookingsRes,
-      todayBookingsRes,
-      recentPendingRes
-    ] = await Promise.all([
-      // 1. Pending Vendors (from users table where role=VENDOR and status is pending)
-      supabase
-        .from('users')
-        .select('id', { count: 'exact', head: true })
-        .eq('role', 'VENDOR')
-        .or('status.eq.PENDING_APPROVAL,status.eq.PENDING_VERIFICATION,status.eq.PENDING'),
+    // 1. Fetch Vendor Stats
+    const { data: vendorCounts, error: vendorError } = await supabase
+      .from('users')
+      .select('status, id', { count: 'exact' })
+      .eq('role', 'VENDOR');
 
-      // 2. Total Active Vendors (from vendor table where status=APPROVED)
-      supabase
-        .from('vendor')
-        .select('id', { count: 'exact', head: true })
-        .eq('status', 'APPROVED'),
+    if (vendorError) {
+      console.error('Error fetching vendor stats:', vendorError);
+      throw vendorError;
+    }
 
-      // 3. Rejected Vendors
-      supabase
-        .from('users')
-        .select('id', { count: 'exact', head: true })
-        .eq('role', 'VENDOR')
-        .eq('status', 'REJECTED'),
+    const vendorStats = {
+      pending: 0,
+      approved: 0,
+      rejected: 0,
+      total: vendorCounts?.length || 0
+    };
 
-      // 4. Total Appointments/Bookings
-      supabase
-        .from('bookings')
-        .select('id', { count: 'exact', head: true }),
+    vendorCounts?.forEach((v: any) => {
+      // Normalize status to handle case sensitivity and variations
+      const status = (v.status || '').toUpperCase();
+      if (status === 'PENDING' || status === 'PENDING_APPROVAL' || status === 'PENDING_VERIFICATION') {
+        vendorStats.pending++;
+      } else if (status === 'APPROVED' || status === 'ACTIVE') {
+        vendorStats.approved++;
+      } else if (status === 'REJECTED' || status === 'SUSPENDED') {
+        vendorStats.rejected++;
+      }
+    });
 
-      // 5. Today's Appointments
-      supabase
-        .from('bookings')
-        .select('id', { count: 'exact', head: true })
-        .eq('status', 'CONFIRMED') // Assuming we only care about confirmed ones today
-        .eq('scheduled_date', new Date().toISOString().split('T')[0]),
+    // 2. Fetch Appointment Stats
+    const { data: bookings, error: bookingError } = await supabase
+      .from('bookings')
+      .select('status, id');
 
-      // 6. Recent Pending Applications (get top 5)
-      supabase
-        .from('users')
-        .select('*')
-        .eq('role', 'VENDOR')
-        .or('status.eq.PENDING_APPROVAL,status.eq.PENDING_VERIFICATION,status.eq.PENDING')
-        .order('created_at', { ascending: false })
-        .limit(5)
-    ]);
+    if (bookingError) {
+      // Don't fail the whole dashboard if bookings fail, just log it
+      console.warn('Error fetching booking stats:', bookingError);
+    }
 
-    // Check for errors
-    if (pendingVendorsRes.error) console.error('Error fetching pending vendors:', pendingVendorsRes.error);
-    if (activeVendorsRes.error) console.error('Error fetching active vendors:', activeVendorsRes.error);
-    if (totalBookingsRes.error) console.error('Error fetching bookings:', totalBookingsRes.error);
+    const appointmentStats = {
+      total: bookings?.length || 0,
+      completed: bookings?.filter((b: any) => b.status === 'COMPLETED').length || 0
+    };
 
-    const pendingCount = pendingVendorsRes.count || 0;
-    const activeCount = activeVendorsRes.count || 0;
-    const rejectedCount = rejectedVendorsRes.count || 0;
-    const totalBookings = totalBookingsRes.count || 0;
-    const todayBookings = todayBookingsRes.count || 0;
+    // 3. Fetch Recent Pending Vendors (Top 5)
+    // We use the 'users' table as the source of truth for status, then join/enrich
+    const { data: recentPendingUsers, error: pendingError } = await supabase
+      .from('users')
+      .select('*')
+      .eq('role', 'VENDOR')
+      .or('status.eq.PENDING,status.eq.PENDING_APPROVAL,status.eq.PENDING_VERIFICATION')
+      .order('created_at', { ascending: false })
+      .limit(5);
 
-    // Process recent pending vendors to partial shape
-    const recentPending = (recentPendingRes.data || []).map((u: any) => ({
-      id: u.id,
-      firstName: u.first_name,
-      lastName: u.last_name,
-      email: u.email,
-      status: u.status,
-      createdAt: u.created_at
-    }));
+    let pendingVendors: any[] = [];
+
+    if (recentPendingUsers && recentPendingUsers.length > 0) {
+      pendingVendors = await Promise.all(recentPendingUsers.map(async (user) => {
+        try {
+          // Try to get shop details from RPC or metadata
+          const { data: meta } = await supabase.rpc('get_user_meta_data', { target_user_id: user.id });
+          const safeMeta = meta || {};
+
+          return {
+            id: user.id,
+            shopName: safeMeta.shop_name || safeMeta.shopName || user.first_name + "'s Shop",
+            ownerName: `${user.first_name} ${user.last_name}`,
+            email: user.email,
+            phone: user.phone,
+            status: user.status,
+            createdAt: user.created_at,
+            description: safeMeta.description,
+            address: safeMeta.address,
+            city: safeMeta.city,
+            state: safeMeta.state,
+            zipCode: safeMeta.zip_code
+          };
+        } catch (err) {
+          return {
+            id: user.id,
+            shopName: 'Unknown',
+            status: user.status,
+            createdAt: user.created_at
+          };
+        }
+      }));
+    }
+
+    // 4. Fetch Recent Appointments (Top 5)
+    // We need to join with customers and vendors to get names
+    const { data: recentBookings, error: recentBookingsError } = await supabase
+      .from('bookings')
+      .select(`
+        id,
+        status,
+        scheduled_date,
+        scheduled_time,
+        created_at,
+        customer:customer_id (first_name, last_name),
+        vendor:vendor_id (*),
+        items:booking_items (
+           service:service_id (name)
+        )
+      `)
+      .order('created_at', { ascending: false })
+      .limit(5);
+
+    const formattedRecentAppointments = (recentBookings || []).map((booking: any) => {
+      const customerName = booking.customer ? `${booking.customer.first_name || ''} ${booking.customer.last_name || ''}`.trim() : 'Unknown Customer';
+
+      // Handle vendor name robustly
+      const v = booking.vendor;
+      const vendorName = v
+        ? (v.shop_name || v.shopName || v.shopname || v.business_name || 'Unknown Vendor')
+        : 'Unknown Vendor';
+
+      const serviceName = booking.items && booking.items.length > 0 && booking.items[0].service
+        ? booking.items[0].service.name
+        : (booking.items?.length > 1 ? `${booking.items.length} Services` : 'Service');
+
+      return {
+        id: booking.id,
+        customerName,
+        vendorName,
+        serviceName,
+        scheduledDate: booking.scheduled_date,
+        scheduledTime: booking.scheduled_time,
+        status: booking.status
+      };
+    });
 
     const dashboardData = {
-      totalVendors: activeCount,
-      totalBookings: totalBookings,
-      pendingApprovals: pendingCount,
-      todayBookings: todayBookings,
-      rejectedVendors: rejectedCount,
+      totalVendors: vendorStats.approved,
+      totalBookings: appointmentStats.total,
+      pendingApprovals: vendorStats.pending,
+      todayBookings: 0, // Not separately calculated in this optimized run, can add if needed
+      rejectedVendors: vendorStats.rejected,
 
       // Detailed stats structures commonly used by frontend
-      vendorStats: {
-        pending: pendingCount,
-        approved: activeCount,
-        rejected: rejectedCount,
-        total: pendingCount + activeCount + rejectedCount
-      },
-      appointmentStats: {
-        total: totalBookings,
-        completed: 0, // optimizing: separate query if needed, or just 0 for now
-        today: todayBookings
-      },
-      pendingVendors: recentPending,
-      recentAppointments: [] // Can allow empty for now to save a query
+      vendorStats: vendorStats,
+      appointmentStats: appointmentStats,
+      pendingVendors: pendingVendors,
+      recentAppointments: formattedRecentAppointments
     };
 
     return res.json({
