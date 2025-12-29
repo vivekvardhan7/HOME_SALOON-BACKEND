@@ -17,7 +17,7 @@ async function setupDatabase() {
 
     // Create a test user for authentication
     await connection.execute('USE homebonzenga');
-    
+
     // Create users table manually for quick setup
     await connection.execute(`
       CREATE TABLE IF NOT EXISTS users (
@@ -40,20 +40,21 @@ async function setupDatabase() {
 
     // Insert test admin user
     const bcrypt = require('bcryptjs');
-    const hashedPassword = await bcrypt.hash('Admin@123', 12);
-    
+    const hashedPassword = await bcrypt.hash('Admin@19A', 12);
+
     await connection.execute(`
-      INSERT IGNORE INTO users (id, email, password, firstName, lastName, role, status) 
-      VALUES ('admin-test-id', 'admin@homebonzenga.com', ?, 'Admin', 'User', 'ADMIN', 'ACTIVE')
+      INSERT INTO users (id, email, password, firstName, lastName, role, status) 
+      VALUES ('admin-test-id', 'Admin@homebonzenga.com', ?, 'Admin', 'User', 'ADMIN', 'ACTIVE')
+      ON DUPLICATE KEY UPDATE password = VALUES(password), email = VALUES(email)
     `, [hashedPassword]);
 
     console.log('Test admin user created');
-    console.log('Email: admin@homebonzenga.com');
-    console.log('Password: Admin@123');
+    console.log('Email: Admin@homebonzenga.com');
+    console.log('Password: Admin@19A');
 
     await connection.end();
     console.log('Database setup completed successfully!');
-    
+
   } catch (error) {
     console.error('Error setting up database:', error);
     process.exit(1);
