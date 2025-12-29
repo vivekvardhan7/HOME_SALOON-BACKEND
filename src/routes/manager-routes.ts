@@ -11,6 +11,11 @@ console.log('✅ Loaded Manager Routes Module (manager-routes.ts)');
 const protect = authenticateManager;
 
 // Get manager dashboard data (Simplified logic to prevent 404/500 errors)
+// Public health check for manager routes availability (Debug)
+router.get('/ping', (req, res) => {
+  res.status(200).json({ status: 'OK', message: 'Manager Routes Working' });
+});
+
 // Get manager dashboard data
 router.get('/dashboard', protect, async (req: AuthenticatedRequest, res: express.Response) => {
   try {
