@@ -9,7 +9,7 @@
     "dev:simple": "nodemon --watch src --ext ts,tsx --exec ts-node src/index-simple.ts",
     "start": "node dist/index.js",
     "start:check": "node start-server.js",
-    "build": "tsc",
+    "build": "npx tsc",
     "test": "jest",
     "seed": "ts-node src/scripts/seed-dashboard-data.ts",
     "seed:admin": "ts-node src/scripts/seed-admin-manager.ts"
