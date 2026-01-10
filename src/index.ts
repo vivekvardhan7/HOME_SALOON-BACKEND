@@ -18,12 +18,16 @@ app.use(cors({
   origin: [
     "http://localhost:5173",
     "https://homebonzenga.com",
-    "https://www.homebonzenga.com"
+    "https://www.homebonzenga.com",
+    "http://localhost:3003"
   ],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'apikey', 'X-Requested-With', 'Accept']
 }));
+
+// Explicitly handle OPTIONS preflight for all routes
+app.options('*', cors());
 
 // Trust proxy for accurate IP addresses (important for rate limiting)
 app.set('trust proxy', true);
@@ -134,14 +138,14 @@ app.use('/api/customer', customerRoutes);
 app.use('/api/catalog', catalogRoutes);
 app.use('/api/invoices', invoiceRoutes);
 
-// Fix: Ensure no HTML fallback for API routes
-app.all('/api/*', (req, res) => {
-  res.status(404).json({ success: false, message: 'API route not found' });
-});
-
 // Health check
 app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'Auth server running with Supabase' });
+});
+
+// Fix: Ensure no HTML fallback for API routes
+app.all('/api/*', (req, res) => {
+  res.status(404).json({ success: false, message: 'API route not found' });
 });
 
 // Start server

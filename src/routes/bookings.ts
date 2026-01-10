@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { supabase, supabaseAnon } from '../lib/supabase';
 import { AuthenticatedRequest } from '../middleware/auth';
+import { calculateFromBase, calculateFromTotal } from '../utils/financials';
 
 
 
@@ -253,6 +254,9 @@ router.post('/at-salon', async (req, res) => {
     const paymentStatus = 'PAID';
     const transactionId = `MOCK_${Date.now()}_${Math.random().toString(36).substring(7).toUpperCase()}`;
 
+    // Standardized Financial Calculation (Reverse from Total)
+    const financials = calculateFromTotal(totalAmount);
+
     // 5. Database Insert (vendor_orders)
     const { data, error } = await supabase
       .from('vendor_orders')
@@ -265,7 +269,14 @@ router.post('/at-salon', async (req, res) => {
         appointment_time: appointment.time,
         notes: appointment.notes,
         services: services, // Store full JSON snapshot
-        total_amount: totalAmount,
+        total_amount: financials.totalAmount,
+
+        // VAT & Financial Columns
+        base_amount: financials.baseAmount,
+        vat_amount: financials.vatAmount,
+        platform_commission: financials.platformCommission,
+        vendor_payout_amount: financials.vendorPayout,
+
         payment_status: paymentStatus,
         payment_method: 'MOCK', // As requested
         transaction_id: transactionId,
@@ -475,17 +486,29 @@ router.post('/', async (req, res) => {
         });
       }
 
+      // VAT and Financial Logic (16% VAT)
+      // subtotal is the BASE AMOUNT (Sum of Service/Product Base Prices)
       const subtotal = serviceSubtotal + productSubtotal;
-      const total =
-        Number(providedTotal) && Number(providedTotal) > 0
-          ? Number(providedTotal)
-          : subtotal;
+
+      // Standardized Forward Calculation (Base -> Total)
+      const financials = calculateFromBase(subtotal);
+
+      // Prioritize calculated total, but allow override if explicitly provided (and validated)
+      // For strict compliance, we should enforce calculated total.
+      const total = financials.totalAmount;
+
       const duration =
         computedDuration || Number(req.body?.duration) || 60;
 
       const status = isCatalogFlow ? 'AWAITING_MANAGER' : 'PENDING';
       const vendorId =
         !isCatalogFlow && bodyVendorId ? String(bodyVendorId) : null;
+
+      // Platform Commission & Vendor Payout (From Financials)
+      const platformFee = financials.platformCommission;
+
+      // Trust catalog payout override if specific, otherwise use standard 85%
+      const calculatedVendorPayout = vendorPayoutTotal > 0 ? vendorPayoutTotal : financials.vendorPayout;
 
       // Create Booking
       const { data: bookingRecord, error: bookingError } = await supabase
@@ -495,21 +518,26 @@ router.post('/', async (req, res) => {
           vendorId,
           managerId: null,
           catalogServiceId: isCatalogFlow && catalogServiceIdsArray.length > 0
-            ? String(catalogServiceIdsArray[0]) // Store first service ID for backward compatibility
+            ? String(catalogServiceIdsArray[0])
             : null,
           bookingType: resolvedBookingType,
           status,
           scheduledDate: bookingDate.toISOString(),
           scheduledTime: timeString,
           duration,
-          subtotal,
+          subtotal, // Base Amount (keep for legacy compatibility if needed, or use financials.baseAmount)
           discount: 0,
-          tax: 0,
-          total,
+          tax: financials.vatAmount,
+          base_amount: financials.baseAmount,
+          vat_amount: financials.vatAmount,
+          platform_commission: platformFee,
+          vendor_payout_amount: calculatedVendorPayout,
+
+          total, // Total Paid (Base + VAT)
           serviceSubtotal,
           productSubtotal,
-          vendorPayout: vendorPayoutTotal || null,
-          platformRevenue: computePlatformRevenue(total, vendorPayoutTotal),
+          vendorPayout: calculatedVendorPayout,
+          platformRevenue: platformFee,
           includeProducts: bookingProductsData.length > 0,
           serviceMode: serviceMode || (isCatalogFlow ? 'WITH_PRODUCTS' : null),
           addressId: addressIdResolved,

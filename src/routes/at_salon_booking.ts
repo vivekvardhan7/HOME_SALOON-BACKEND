@@ -25,6 +25,15 @@ router.post('/', async (req, res) => {
         const transactionId = `MOCK_TXN_${Date.now()}`;
         const paymentStatus = 'PAID';
 
+        const inputTotal = Number(totalAmount);
+        // Calculation: 16% VAT derived from Total (Inclusive)
+        // Base = Total / 1.16
+        // VAT = Total - Base
+        const baseAmount = Number((inputTotal / 1.16).toFixed(2));
+        const vatAmount = Number((inputTotal - baseAmount).toFixed(2));
+        const platformCommission = Number((baseAmount * 0.15).toFixed(2));
+        const vendorPayoutAmount = Number((baseAmount * 0.85).toFixed(2));
+
         // 4. Construct DB Payload for vendor_orders table
         const dbPayload = {
             vendor_id: vendorId,
@@ -35,7 +44,14 @@ router.post('/', async (req, res) => {
             appointment_time: appointment.time,
             notes: appointment.notes || '',
             services: services, // JSONB
-            total_amount: totalAmount,
+            total_amount: inputTotal,
+
+            // Financials
+            base_amount: baseAmount,
+            vat_amount: vatAmount,
+            platform_commission: platformCommission,
+            vendor_payout_amount: vendorPayoutAmount,
+
             payment_status: paymentStatus,
             payment_method: paymentMethod || 'MOCK',
             transaction_id: transactionId,

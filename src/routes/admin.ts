@@ -14,6 +14,7 @@ router.get('/dashboard', protect, async (req, res) => {
   try {
     console.log('📊 Fetching admin dashboard data...');
     // Get comprehensive stats - fetch all data in parallel
+    // Get comprehensive stats - fetch all data in parallel
     const [
       usersResult,
       vendorsResult,
@@ -29,7 +30,12 @@ router.get('/dashboard', protect, async (req, res) => {
       paymentsResult,
       reviewsResult,
       servicesCatalogResult,
-      productsCatalogResult
+      productsCatalogResult,
+      athomeBookingsResult, // NEW
+      vendorOrdersResult,    // NEW
+      vendorServicesResult,  // NEW
+      vendorProductsResult,  // NEW
+      vendorServicesLegacyResult // NEW (Fallback)
     ] = await Promise.all([
       supabase.from('users').select('id, role, status', { count: 'exact' }),
       supabase.from('vendor').select('id, status, shopname', { count: 'exact' }),
@@ -45,7 +51,12 @@ router.get('/dashboard', protect, async (req, res) => {
       supabase.from('payments').select('id, amount, status, refund_amount, created_at', { count: 'exact' }),
       supabase.from('reviews').select('id, rating', { count: 'exact' }),
       supabase.from('service_catalog').select('id, is_active', { count: 'exact' }),
-      supabase.from('product_catalog').select('id, is_active', { count: 'exact' })
+      supabase.from('product_catalog').select('id, is_active', { count: 'exact' }),
+      supabase.from('athome_bookings').select('id, total_amount, status, created_at', { count: 'exact' }), // at-home specific
+      supabase.from('vendor_orders').select('id, total_amount, booking_status, created_at', { count: 'exact' }), // salon specific
+      supabase.from('services').select('id, is_active', { count: 'exact' }).eq('is_active', true), // vendor services
+      supabase.from('products').select('id, is_active', { count: 'exact' }).eq('is_active', true), // vendor products
+      supabase.from('vendor_services').select('id, is_active', { count: 'exact' }).eq('is_active', true) // Legacy fallback
     ]);
 
     // Extract counts and data (handle errors gracefully for optional tables)
@@ -53,12 +64,35 @@ router.get('/dashboard', protect, async (req, res) => {
     const totalVendors = vendorsResult.count ?? vendorsResult.data?.length ?? 0;
     const totalManagers = managersResult.count ?? 0;
     const pendingApprovals = pendingApprovalsResult.count ?? 0;
-    const totalBookings = bookingsResult.count ?? bookingsResult.data?.length ?? 0;
+
+    // Core Bookings (Shared Table)
+    const bookings = bookingsResult.data || [];
+    const coreAtHome = bookings.filter(b => b?.booking_type === 'AT_HOME' || (!b?.booking_type && b?.status)).length;
+    const coreSalon = bookings.filter(b => b?.booking_type === 'SALON_VISIT').length;
+
+    // Dedicated Tables
+    const athomeTableCount = athomeBookingsResult.count ?? 0;
+    const vendorOrdersCount = vendorOrdersResult.count ?? 0;
+
+    // Aggregated Counts
+    const totalBookings = (bookingsResult.count ?? 0) + athomeTableCount + vendorOrdersCount;
+    const atHomeBookings = coreAtHome + athomeTableCount;
+    const salonBookings = coreSalon + vendorOrdersCount;
+
     const completedBookings = completedBookingsResult.count ?? completedBookingsResult.data?.length ?? 0;
     const activeUsers = activeUsersResult.count ?? 0;
     const suspendedUsers = suspendedUsersResult.count ?? 0;
     const activeVendors = activeVendorsResult.count ?? 0;
     const pendingVendors = pendingVendorsResult.count ?? 0;
+
+    // Vendor Services/Products
+    // combine both tables to be safe
+    const servicesCount = vendorServicesResult.count ?? 0;
+    const servicesLegacyCount = vendorServicesLegacyResult.error ? 0 : (vendorServicesLegacyResult.count ?? 0);
+    const totalVendorServices = servicesCount + servicesLegacyCount;
+
+    const totalVendorProducts = vendorProductsResult.count ?? 0;
+
     // Handle optional tables that might not exist
     const totalEmployees = employeesResult.error ? 0 : (employeesResult.count ?? employeesResult.data?.length ?? 0);
     const totalPayments = paymentsResult.error ? 0 : (paymentsResult.count ?? paymentsResult.data?.length ?? 0);
@@ -66,31 +100,43 @@ router.get('/dashboard', protect, async (req, res) => {
     const totalCatalogServices = servicesCatalogResult.error ? 0 : (servicesCatalogResult.count ?? servicesCatalogResult.data?.length ?? 0);
     const totalCatalogProducts = productsCatalogResult.error ? 0 : (productsCatalogResult.count ?? productsCatalogResult.data?.length ?? 0);
 
-    // Process bookings data
-    const bookings = bookingsResult.data || [];
-    const atHomeBookings = bookings.filter(b => b?.booking_type === 'AT_HOME' || (!b?.booking_type && b?.status)).length;
-    const salonBookings = bookings.filter(b => b?.booking_type === 'SALON_VISIT').length;
 
-    // Calculate revenue from completed bookings
+    // Calculate revenue from ALL sources
+    // 1. Completed Bookings (Shared)
     const completedBookingsData = completedBookingsResult.data || [];
-    const totalRevenue = completedBookingsData.reduce((sum, b) => sum + (Number(b?.total) || 0), 0);
+    const revenueFromCore = completedBookingsData.reduce((sum, b) => sum + (Number(b?.total) || 0), 0);
 
-    // Monthly revenue (last 30 days)
+    // 2. Completed At-Home (Dedicated) - Assuming 'COMPLETED' or similar status
+    const athomeData = athomeBookingsResult.data || [];
+    const revenueFromAtHome = athomeData
+      .filter(b => b.status === 'COMPLETED' || b.status === 'PAID')
+      .reduce((sum, b) => sum + (Number(b?.total_amount) || 0), 0);
+
+    // 3. Completed Vendor Orders (Salon) - Assuming 'CONFIRMED' or 'PAID' implies value
+    const vendorOrdersData = vendorOrdersResult.data || [];
+    const revenueFromSalon = vendorOrdersData
+      .filter(b => b.booking_status === 'CONFIRMED' || b.booking_status === 'COMPLETED')
+      .reduce((sum, b) => sum + (Number(b?.total_amount) || 0), 0);
+
+    const totalRevenue = revenueFromCore + revenueFromAtHome + revenueFromSalon;
+
+    // Monthly revenue (last 30 days) - Aggregated
     const thirtyDaysAgo = new Date();
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    const monthlyRevenue = completedBookingsData
-      .filter(b => {
-        if (b?.created_at) {
-          try {
-            const bookingDate = new Date(b.created_at);
-            return bookingDate >= thirtyDaysAgo;
-          } catch {
-            return false;
-          }
-        }
-        return false;
-      })
+
+    const monthlyRevenueCore = completedBookingsData
+      .filter(b => b.created_at && new Date(b.created_at) >= thirtyDaysAgo)
       .reduce((sum, b) => sum + (Number(b?.total) || 0), 0);
+
+    const monthlyRevenueAtHome = athomeData
+      .filter(b => b.created_at && new Date(b.created_at) >= thirtyDaysAgo && (b.status === 'COMPLETED' || b.status === 'PAID'))
+      .reduce((sum, b) => sum + (Number(b?.total_amount) || 0), 0);
+
+    const monthlyRevenueSalon = vendorOrdersData
+      .filter(b => b.created_at && new Date(b.created_at) >= thirtyDaysAgo && (b.booking_status === 'CONFIRMED' || b.booking_status === 'COMPLETED'))
+      .reduce((sum, b) => sum + (Number(b?.total_amount) || 0), 0);
+
+    const monthlyRevenue = monthlyRevenueCore + monthlyRevenueAtHome + monthlyRevenueSalon;
 
     // Process payments for pending payouts and refunds (handle missing table)
     const payments = paymentsResult.error ? [] : (paymentsResult.data || []);
@@ -111,6 +157,10 @@ router.get('/dashboard', protect, async (req, res) => {
     const productsCatalog = productsCatalogResult.error ? [] : (productsCatalogResult.data || []);
     const activeCatalogProducts = productsCatalog.filter(p => p?.is_active === true).length;
 
+    // Platform Totals (Catalog + Vendor)
+    const totalPlatformServices = activeCatalogServices + totalVendorServices;
+    const totalPlatformProducts = activeCatalogProducts + totalVendorProducts;
+
     const stats = {
       totalUsers,
       totalVendors,
@@ -125,7 +175,7 @@ router.get('/dashboard', protect, async (req, res) => {
       activeVendors,
       pendingVendors,
       totalBookings,
-      completedBookings,
+      completedBookings: completedBookings + (athomeData.length) + (vendorOrdersData.length), // Simplified count of 'completed' actions
       atHomeBookings,
       salonBookings,
       totalCommissions: totalRevenue * 0.15, // 15% commission
@@ -134,7 +184,9 @@ router.get('/dashboard', protect, async (req, res) => {
       totalCatalogServices,
       activeCatalogServices,
       totalCatalogProducts,
-      activeCatalogProducts
+      activeCatalogProducts,
+      totalPlatformServices, // NEW
+      totalPlatformProducts  // NEW
     };
 
     // Get pending vendors with user details

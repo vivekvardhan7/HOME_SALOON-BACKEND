@@ -55,6 +55,11 @@ export const authenticate = async (
   res: Response,
   next: NextFunction
 ) => {
+  // SKIP OPTIONS (Preflight) requests
+  if (req.method === 'OPTIONS') {
+    return next();
+  }
+
   try {
     const token = auth.extractTokenFromHeader(req.headers.authorization);
 

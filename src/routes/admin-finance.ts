@@ -31,38 +31,63 @@ router.get('/finance/summary', requireAuth, requireRole(['ADMIN']), async (req: 
             // LIFETIME MODE: Calculate directly from raw tables using consistent logic with Monthly
 
             // 1. Vendor (Salon) Bookings
-            // Match Monthly Logic: Source vendor_orders, Status CONFIRMED/PAID/COMPLETED
+            // Source vendor_orders, Status CONFIRMED/PAID/COMPLETED
             const { data: salonBookings, error: sErr } = await supabase
                 .from('vendor_orders')
-                .select('total_amount')
+                .select('total_amount, base_amount, vat_amount, platform_commission, vendor_payout_amount')
                 .in('booking_status', ['CONFIRMED', 'PAID', 'COMPLETED']);
 
             if (sErr) throw sErr;
 
-            const salonGross = salonBookings?.reduce((sum, b) => sum + (Number(b.total_amount) || 0), 0) || 0;
-            const salonComm = salonGross * 0.15; // Match 15% used in Monthly
-            const salonNet = salonGross - salonComm;
+            const salonTotals = salonBookings?.reduce((acc, b) => {
+                const total = Number(b.total_amount) || 0;
+                // STRICT LOGIC: Commission & Payouts are on BASE only.
+                // If base_amount exists, use it. If legacy (null), assume total was base (0 VAT).
+                const base = b.base_amount !== null ? Number(b.base_amount) : total;
+                const vat = Number(b.vat_amount) || 0;
 
-            vendorTotals = { gross: salonGross, commission: salonComm, net_payable: salonNet };
+                const comm = b.platform_commission !== null ? Number(b.platform_commission) : (base * 0.15);
+                const net = b.vendor_payout_amount !== null ? Number(b.vendor_payout_amount) : (base * 0.85);
+
+                return {
+                    gross: acc.gross + total,
+                    vat: acc.vat + vat,
+                    commission: acc.commission + comm,
+                    net_payable: acc.net_payable + net
+                };
+            }, { gross: 0, vat: 0, commission: 0, net_payable: 0 }) || { gross: 0, vat: 0, commission: 0, net_payable: 0 };
+
+            vendorTotals = salonTotals;
 
             // 2. Beautician (At-Home) Bookings
             // Match Monthly Logic: Source athome_bookings, Payment SUCCESS
             const { data: homeBookings, error: hErr } = await supabase
                 .from('athome_bookings')
-                .select('total_amount')
+                .select('total_amount, base_amount, vat_amount, platform_commission, vendor_payout_amount')
                 .eq('payment_status', 'SUCCESS');
 
             if (hErr) throw hErr;
 
-            const homeGross = homeBookings?.reduce((sum, b) => sum + (Number(b.total_amount) || 0), 0) || 0;
-            const homeComm = homeGross * 0.15; // Match 15% used in Monthly
-            const homeNet = homeGross - homeComm;
+            const homeTotalsCalc = homeBookings?.reduce((acc, b) => {
+                const total = Number(b.total_amount) || 0;
+                const base = b.base_amount !== null ? Number(b.base_amount) : total;
+                const vat = Number(b.vat_amount) || 0;
 
-            beauticianTotals = { gross: homeGross, commission: homeComm, net_payable: homeNet };
+                const comm = b.platform_commission !== null ? Number(b.platform_commission) : (base * 0.15);
+                const net = b.vendor_payout_amount !== null ? Number(b.vendor_payout_amount) : (base * 0.85);
+
+                return {
+                    gross: acc.gross + total,
+                    vat: acc.vat + vat,
+                    commission: acc.commission + comm,
+                    net_payable: acc.net_payable + net
+                };
+            }, { gross: 0, vat: 0, commission: 0, net_payable: 0 }) || { gross: 0, vat: 0, commission: 0, net_payable: 0 };
+
+            beauticianTotals = homeTotalsCalc;
 
         } else {
-            // MONTHLY MODE: Use the Summary Table (Fallback) or Calculate Live
-            // For accuracy, we will calculate LIVE like the details endpoints
+            // MONTHLY MODE (LIVE CALCULATION)
             const startDate = `${mt}-01`;
             const nextMonth = new Date(`${mt}-01`);
             nextMonth.setMonth(nextMonth.getMonth() + 1);
@@ -71,31 +96,57 @@ router.get('/finance/summary', requireAuth, requireRole(['ADMIN']), async (req: 
             // Vendors Live
             const { data: vOrders } = await supabase
                 .from('vendor_orders')
-                .select('total_amount')
+                .select('total_amount, base_amount, vat_amount, platform_commission, vendor_payout_amount')
                 .in('booking_status', ['CONFIRMED', 'PAID', 'COMPLETED'])
                 .gte('created_at', startDate)
                 .lt('created_at', endDate);
 
-            const vGross = vOrders?.reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0) || 0;
-            vendorTotals = { gross: vGross, commission: vGross * 0.15, net_payable: vGross * 0.85 };
+            const vTotals = vOrders?.reduce((acc, b) => {
+                const total = Number(b.total_amount) || 0;
+                const base = b.base_amount !== null ? Number(b.base_amount) : total;
+                const vat = Number(b.vat_amount) || 0;
+
+                const comm = b.platform_commission !== null ? Number(b.platform_commission) : (base * 0.15);
+                const net = b.vendor_payout_amount !== null ? Number(b.vendor_payout_amount) : (base * 0.85);
+                return {
+                    gross: acc.gross + total,
+                    vat: acc.vat + vat,
+                    commission: acc.commission + comm,
+                    net_payable: acc.net_payable + net
+                };
+            }, { gross: 0, vat: 0, commission: 0, net_payable: 0 }) || { gross: 0, vat: 0, commission: 0, net_payable: 0 };
+
+            vendorTotals = vTotals;
 
             // Beauticians Live
             const { data: bBookings } = await supabase
                 .from('athome_bookings')
-                .select('total_amount')
+                .select('total_amount, base_amount, vat_amount, platform_commission, vendor_payout_amount')
                 .eq('payment_status', 'SUCCESS')
                 .gte('created_at', startDate)
                 .lt('created_at', endDate);
 
-            const bGross = bBookings?.reduce((sum, b) => sum + (Number(b.total_amount) || 0), 0) || 0;
-            beauticianTotals = { gross: bGross, commission: bGross * 0.15, net_payable: bGross * 0.85 };
+            const bTotals = bBookings?.reduce((acc, b) => {
+                const total = Number(b.total_amount) || 0;
+                const base = b.base_amount !== null ? Number(b.base_amount) : total;
+                const vat = Number(b.vat_amount) || 0;
+
+                const comm = b.platform_commission !== null ? Number(b.platform_commission) : (base * 0.15);
+                const net = b.vendor_payout_amount !== null ? Number(b.vendor_payout_amount) : (base * 0.85);
+                return {
+                    gross: acc.gross + total,
+                    vat: acc.vat + vat,
+                    commission: acc.commission + comm,
+                    net_payable: acc.net_payable + net
+                };
+            }, { gross: 0, vat: 0, commission: 0, net_payable: 0 }) || { gross: 0, vat: 0, commission: 0, net_payable: 0 };
+
+            beauticianTotals = bTotals;
         }
 
         const totalRevenue = vendorTotals.gross + beauticianTotals.gross;
-        // ... (rest of summary logic remains similar, ensuring commission rates match) ...
-
         const totalCommission = vendorTotals.commission + beauticianTotals.commission;
-
+        const totalVAT = (vendorTotals as any).vat + (beauticianTotals as any).vat;
 
         // Fetch subscriptions
         let subQuery = supabase.from('subscriptions').select('amount, status, entity_type');
@@ -144,11 +195,13 @@ router.get('/finance/summary', requireAuth, requireRole(['ADMIN']), async (req: 
                 revenue: {
                     gross: totalRevenue,
                     commission: totalCommission,
+                    vat_collected: totalVAT,
                     subscriptions: totalSubscriptions
                 },
                 breakdown: {
                     vendor: {
                         gross: vendorTotals.gross,
+                        vat: (vendorTotals as any).vat,
                         commission: vendorTotals.commission,
                         subscriptions: vendorSubs.paid_amount,
                         net_payable: vendorTotals.net_payable,
@@ -157,6 +210,7 @@ router.get('/finance/summary', requireAuth, requireRole(['ADMIN']), async (req: 
                     },
                     beautician: {
                         gross: beauticianTotals.gross,
+                        vat: (beauticianTotals as any).vat,
                         commission: beauticianTotals.commission,
                         subscriptions: beauticianSubs.paid_amount,
                         net_payable: beauticianTotals.net_payable,
@@ -318,7 +372,7 @@ router.get('/finance/vendors', requireAuth, requireRole(['ADMIN']), async (req: 
         // Rule: booking_status IN ('CONFIRMED','PAID','COMPLETED')
         const { data: salonOrders } = await supabase
             .from('vendor_orders')
-            .select('vendor_id, total_amount')
+            .select('vendor_id, total_amount, base_amount') // Added base_amount
             .in('booking_status', ['CONFIRMED', 'PAID', 'COMPLETED'])
             .gte('created_at', startDate)
             .lt('created_at', endDate);
@@ -327,7 +381,7 @@ router.get('/finance/vendors', requireAuth, requireRole(['ADMIN']), async (req: 
         // Rule: payment_status = SUCCESS (or legacy status COMPLETED fallback if handled in trigger)
         const { data: appBookings } = await supabase
             .from('bookings')
-            .select('vendorId, vendor_id, total') // Handle camel/snake case
+            .select('vendorId, vendor_id, total, base_amount') // Added base_amount
             .eq('payment_status', 'SUCCESS')
             .gte('created_at', startDate)
             .lt('created_at', endDate);
@@ -353,15 +407,44 @@ router.get('/finance/vendors', requireAuth, requireRole(['ADMIN']), async (req: 
             const vid = v.id;
 
             // A. Money (Live)
-            const salonRevenue = salonOrders
-                ?.filter(o => o.vendor_id === vid)
-                .reduce((sum, o) => sum + (Number(o.total_amount) || 0), 0) || 0;
+            // Salon
+            const salonBookingsForVendor = salonOrders?.filter(o => o.vendor_id === vid) || [];
 
-            const appRevenue = appBookings
-                ?.filter((b: any) => (b.vendorId === vid || b.vendor_id === vid))
-                .reduce((sum, b) => sum + (Number(b.total) || 0), 0) || 0;
+            // Calc Base & Gross strictly from Base
+            const salonFinancials = salonBookingsForVendor.reduce((acc, o) => {
+                const totalStored = Number(o.total_amount) || 0;
+                // If base is present, use it. If not, assume totalStored included VAT (Legacy safe assumption)
+                const base = o.base_amount !== null ? Number(o.base_amount) : (totalStored / 1.16);
+                const vat = base * 0.16;
+                const total = base + vat;
+                return {
+                    base: acc.base + base,
+                    gross: acc.gross + total
+                };
+            }, { base: 0, gross: 0 });
 
-            const totalGross = salonRevenue + appRevenue;
+            const salonBase = salonFinancials.base;
+            const salonGross = salonFinancials.gross;
+
+            // App
+            const appBookingsForVendor = appBookings?.filter((b: any) => (b.vendorId === vid || b.vendor_id === vid)) || [];
+
+            const appFinancials = appBookingsForVendor.reduce((acc, b) => {
+                const totalStored = Number(b.total) || 0;
+                const base = b.base_amount !== null ? Number(b.base_amount) : (totalStored / 1.16);
+                const vat = base * 0.16;
+                const total = base + vat;
+                return {
+                    base: acc.base + base,
+                    gross: acc.gross + total
+                };
+            }, { base: 0, gross: 0 });
+
+            const appBase = appFinancials.base;
+            const appGross = appFinancials.gross;
+
+            const totalGross = salonGross + appGross; // Total Revenue (Base + VAT)
+            const totalBase = salonBase + appBase;    // Base Only
 
             // B. Counts (Live)
             const salonCount = salonCounts?.filter(c => c.vendor_id === vid).length || 0;
@@ -370,8 +453,8 @@ router.get('/finance/vendors', requireAuth, requireRole(['ADMIN']), async (req: 
 
             // C. Financials
             const gross = totalGross;
-            const commission = gross * 0.15;
-            const netPayable = gross - commission;
+            const commission = totalBase * 0.15; // 15% of Base
+            const netPayable = totalBase * 0.85; // 85% of Based on Base
 
             const totalPaid = payouts?.filter(p => p.entity_id === vid).reduce((sum, p) => sum + (Number(p.net_paid) || 0), 0) || 0;
             const balance = netPayable - totalPaid;
@@ -458,7 +541,7 @@ router.get('/finance/beauticians', requireAuth, requireRole(['ADMIN']), async (r
         // Link: assigned_beautician_id
         const { data: liveBookings } = await supabase
             .from('athome_bookings')
-            .select('assigned_beautician_id, total_amount')
+            .select('assigned_beautician_id, total_amount, base_amount') // Added base_amount
             .eq('payment_status', 'SUCCESS')
             .gte('created_at', startDate)
             .lt('created_at', endDate);
@@ -483,9 +566,23 @@ router.get('/finance/beauticians', requireAuth, requireRole(['ADMIN']), async (r
             const name = b.name || 'Unknown';
 
             // A. Money (Live)
-            const monthlyRevenue = liveBookings
-                ?.filter((bk: any) => bk.assigned_beautician_id === bid)
-                .reduce((sum, bk) => sum + (Number(bk.total_amount) || 0), 0) || 0;
+            const beauticianBookings = liveBookings?.filter((bk: any) => bk.assigned_beautician_id === bid) || [];
+
+            // Calc Base & Gross strictly from Base
+            const beauticianFinancials = beauticianBookings.reduce((acc, bk) => {
+                const totalStored = Number(bk.total_amount) || 0;
+                // Fallback for legacy: total stored was inclusive, so base = total / 1.16
+                const base = bk.base_amount !== null ? Number(bk.base_amount) : (totalStored / 1.16);
+                const vat = base * 0.16;
+                const total = base + vat;
+                return {
+                    base: acc.base + base,
+                    gross: acc.gross + total
+                };
+            }, { base: 0, gross: 0 });
+
+            const monthlyBase = beauticianFinancials.base;
+            const monthlyGross = beauticianFinancials.gross;
 
             // B. Counts
             const monthlyCount = completedStats
@@ -495,9 +592,9 @@ router.get('/finance/beauticians', requireAuth, requireRole(['ADMIN']), async (r
                 ?.filter((bk: any) => bk.assigned_beautician_id === bid).length || 0;
 
             // C. Financials
-            const gross = monthlyRevenue;
-            const commission = gross * 0.15;
-            const netPayable = gross - commission;
+            const gross = monthlyGross;
+            const commission = monthlyBase * 0.15; // 15% of Base
+            const netPayable = monthlyBase * 0.85; // 85% of Based on Base
 
             const totalPaid = payouts?.filter(p => p.entity_id === bid).reduce((sum, p) => sum + (Number(p.net_paid) || 0), 0) || 0;
             const balance = netPayable - totalPaid;
@@ -568,21 +665,38 @@ router.post('/finance/generate-statements', requireAuth, requireRole(['ADMIN']),
                 // TODO: Strict date filtering. Here relying on 'bookings' table having 'vendor_id'
                 const { data: sales, error: sErr } = await supabase
                     .from('bookings')
-                    .select('total')
+                    .select('total, base_amount') // Added base_amount
                     .eq('vendor_id', v.id)
                     .eq('status', 'COMPLETED')
                     .ilike('created_at', `${month}%`); // Simple filter YYYY-MM
 
                 if (!sErr && sales) {
-                    const totalGross = sales.reduce((sum, b) => sum + (Number(b.total) || 0), 0);
+                    const financials = sales.reduce((acc, b) => {
+                        const totalStored = Number(b.total) || 0;
+                        const base = b.base_amount !== null ? Number(b.base_amount) : (totalStored / 1.16);
+                        const vat = base * 0.16;
+                        const total = base + vat;
+                        return {
+                            base: acc.base + base,
+                            gross: acc.gross + total
+                        };
+                    }, { base: 0, gross: 0 });
+
+                    const totalBase = financials.base;
+                    const totalGross = financials.gross;
                     const count = sales.length;
+
+                    const commission = totalBase * 0.15;
+                    const netPayable = totalBase * 0.85;
 
                     await supabase.from('monthly_earnings_summary').upsert({
                         entity_type: 'VENDOR',
                         entity_id: v.id,
                         month: month,
                         total_services: count,
-                        gross_amount: totalGross
+                        gross_amount: totalGross,
+                        commission_amount: commission, // Added
+                        net_payable: netPayable       // Added
                     }, { onConflict: 'entity_type, entity_id, month' });
                 }
             }
@@ -611,21 +725,38 @@ router.post('/finance/generate-statements', requireAuth, requireRole(['ADMIN']),
                 // Needs strict check on schema. assuming 'assigned_beautician_id' exists on athome_bookings
                 const { data: sales, error: sErr } = await supabase
                     .from('athome_bookings')
-                    .select('total_amount') // Check column name
+                    .select('total_amount, base_amount') // Added base_amount
                     .eq('assigned_beautician_id', b.id)
                     .eq('status', 'COMPLETED') // Or whatever completion status
                     .ilike('created_at', `${month}%`);
 
                 if (!sErr && sales) {
-                    const totalGross = sales.reduce((sum, b) => sum + (Number(b.total_amount) || 0), 0);
+                    const financials = sales.reduce((acc, b) => {
+                        const totalStored = Number(b.total_amount) || 0;
+                        const base = b.base_amount !== null ? Number(b.base_amount) : (totalStored / 1.16);
+                        const vat = base * 0.16;
+                        const total = base + vat;
+                        return {
+                            base: acc.base + base,
+                            gross: acc.gross + total
+                        };
+                    }, { base: 0, gross: 0 });
+
+                    const totalBase = financials.base;
+                    const totalGross = financials.gross;
                     const count = sales.length;
+
+                    const commission = totalBase * 0.15;
+                    const netPayable = totalBase * 0.85;
 
                     await supabase.from('monthly_earnings_summary').upsert({
                         entity_type: 'BEAUTICIAN',
                         entity_id: b.id,
                         month: month,
                         total_services: count,
-                        gross_amount: totalGross
+                        gross_amount: totalGross,
+                        commission_amount: commission, // Added
+                        net_payable: netPayable       // Added
                     }, { onConflict: 'entity_type, entity_id, month' });
                 }
             }
