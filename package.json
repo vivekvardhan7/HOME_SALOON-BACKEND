@@ -7,14 +7,15 @@
     "dev": "nodemon",
     "dev:verbose": "nodemon --verbose",
     "dev:simple": "nodemon --watch src --ext ts,tsx --exec ts-node src/index-simple.ts",
+    "build": "node ./node_modules/typescript/bin/tsc",
     "start": "node dist/index.js",
     "start:check": "node start-server.js",
-    "build": "node ./node_modules/typescript/bin/tsc",
     "test": "jest",
     "seed": "ts-node src/scripts/seed-dashboard-data.ts",
     "seed:admin": "ts-node src/scripts/seed-admin-manager.ts"
   },
   "dependencies": {
+    "typescript": "^5.9.3",
     "@prisma/client": "^6.1.0",
     "@supabase/supabase-js": "^2.80.0",
     "@types/bcryptjs": "^2.4.6",
@@ -50,7 +51,6 @@
     "pg": "^8.16.3",
     "prisma": "^6.1.0",
     "ts-jest": "^29.2.5",
-    "ts-node": "^10.9.2",
-    "typescript": "^5.9.3"
+    "ts-node": "^10.9.2"
   }
 }
